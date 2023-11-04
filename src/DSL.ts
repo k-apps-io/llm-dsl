@@ -39,6 +39,19 @@ export type FunctionResponse = {
   arguments: any;
 };
 
+export interface ChatChunk {
+  type: "chat" | "sidebar";
+  name: string;
+  chat: string;
+  state: "open" | "closed";
+}
+export interface MessageChunk {
+  type: "message";
+  content: string | Uint8Array;
+  chat: string;
+  message: string;
+}
+
 export abstract class LLM {
 
   constructor() { }
@@ -74,8 +87,9 @@ export class DSL<T extends Options, C extends Context> {
   }> = [];
   pipelineCursor: number = -1; // manages current position in the pipeline
   _context?: C;
+  type: "chat" | "sidebar" = "chat";
 
-  out: ( data: { content: string | Uint8Array; chatId: string; messageId: string; } ) => void = () => { };
+  out: ( data: ChatChunk | MessageChunk ) => void = () => { };
 
   constructor( { llm, storage, name, options }: {
     llm: LLM;
@@ -144,7 +158,7 @@ export class DSL<T extends Options, C extends Context> {
         included: messages.map( m => m.id! )
       } );
       await this.storage.save( this.chat );
-      this.out( { content: options.message + "\n", chatId: this.chat.id!, messageId } );
+      this.out( { type: "message", content: options.message + "\n", chat: this.chat.id!, message: messageId } );
       const stream = await this.llm.stream( {
         messages: [ ...messages.map( m => ( { prompt: m.content, role: m.role } ) ), { prompt: options.message, role: "user" } ],
         functions: Object.keys( this.functions ).map( k => this.functions[ k ] ),
@@ -156,18 +170,18 @@ export class DSL<T extends Options, C extends Context> {
       await ( async () => {
         for await ( const chunk of stream ) {
           if ( chunk.type === "text" ) {
-            this.out( { content: chunk.content, chatId: this.chat.id!, messageId } );
+            this.out( { type: "message", content: chunk.content, chat: this.chat.id!, message: messageId } );
             message += chunk.content;
           } else {
             const content = `call: ${ chunk.name! }(${ chunk.arguments })`;
-            this.out( { content: content, chatId: this.chat.id!, messageId } );
+            this.out( { type: "message", content: content, chat: this.chat.id!, message: messageId } );
             message += content;
             func = this.functions[ chunk.name! ];
             args = chunk.arguments!;
           }
         }
       } )();
-      this.out( { content: "\n", chatId: this.chat.id!, messageId } );
+      this.out( { type: "message", content: "\n", chat: this.chat.id!, message: messageId } );
       const blocks = extractBlocks( message );
       this.chat.messages.push( {
         id: uuid(),
@@ -200,8 +214,9 @@ export class DSL<T extends Options, C extends Context> {
     // create a new chat and have a sidebar conversation
     const sidebar = new DSL<T, C>( { llm: this.llm, storage: this.storage, options: this.options, name: `Sidebar - ${ name || this.chat.name }` } );
     this.chat.sidebars.push( sidebar.chat.id! );
-    await sidebar.storage.save( sidebar.chat );
     sidebar.functions = this.functions;
+    sidebar.type = "sidebar";
+    await sidebar.storage.save( sidebar.chat );
     await this.storage.save( this.chat );
     return sidebar;
   }
@@ -231,7 +246,11 @@ export class DSL<T extends Options, C extends Context> {
    * @returns a clone of the chat object
    */
   clone() {
-    return cloneDeep( this );
+    this.chat.id = uuid();
+    this.chat.messages = this.chat.messages.filter( m => this.rules.includes( m.id! ) );
+    this.pipelineCursor = -1;
+    this.chat.sidebars = [];
+    return this;
   }
 
   /**
@@ -463,7 +482,7 @@ export class DSL<T extends Options, C extends Context> {
    * @param output 
    * @returns 
    */
-  async stream( output: ( data: { content: string | Uint8Array; chatId: string; messageId: string; } ) => void ) {
+  async stream( output: ( data: ChatChunk | MessageChunk ) => void ) {
     this.out = output;
     return this.execute();
   }
@@ -478,6 +497,7 @@ export class DSL<T extends Options, C extends Context> {
       try {
         let hasNext = true;
         this.pipelineCursor = 0;
+        this.out( { type: this.type, chat: this.chat.id!, name: this.chat.name, state: "open" } );
         while ( hasNext ) {
           const stage = this.pipeline[ this.pipelineCursor ];
           if ( stage === undefined ) break;
@@ -487,8 +507,10 @@ export class DSL<T extends Options, C extends Context> {
         }
         resolve();
       } catch ( error ) {
+        this.out( { type: "message", chat: this.chat.id!, message: "", content: String( error ) } );
         reject( error );
       }
+      this.out( { type: this.type, chat: this.chat.id!, name: this.chat.name, state: "closed" } );
     } );
   }
 }

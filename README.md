@@ -98,7 +98,9 @@ const main = () => {
     .prompt({
       message: "Uecke, give me a home run call"
     })
-    .stream(({ content }) => process.stdout.write( content ))
+    .stream( chunk => {
+      if ( chunk.type === "message" ) process.stdout.write( chunk.content )
+    })
     .then(() => console.log("done"))
     .catch(console.error)
 }
@@ -131,7 +133,9 @@ const main = () => {
     .prompt({
       message: "what's the weather like today?"
     })
-    .stream(({ content }) => process.stdout.write( content ))
+    .stream( chunk => {
+      if ( chunk.type === "message" ) process.stdout.write( chunk.content )
+    })
     .then(() => console.log("done"))
     .catch(console.error)
 }
@@ -150,7 +154,9 @@ const main = () => {
     .prompt({
       message: "give me a TL;DR on javascript"
     })
-    .stream(({ content }) => process.stdout.write( content ))
+    .stream( chunk => {
+      if ( chunk.type === "message" ) process.stdout.write( chunk.content )
+    })
     .then(() => console.log("done"))
     .catch(console.error)
 }
@@ -181,7 +187,9 @@ const main = () => {
       chat.context = "";
       resolve();
     }))
-    .stream(({ content }) => process.stdout.write( content ))
+    .stream( chunk => {
+      if ( chunk.type === "message" ) process.stdout.write( chunk.content )
+    })
     .then(() => console.log("done"))
     .catch(console.error)
 }
@@ -222,7 +230,9 @@ const main = () => {
         }
       }
     }))
-    .stream(({ content }) => process.stdout.write( content ))
+    .stream( chunk => {
+      if ( chunk.type === "message" ) process.stdout.write( chunk.content )
+    })
     .then(() => console.log("done"))
     .catch(console.error)
 }
@@ -260,7 +270,9 @@ const main = () => {
     .prompt({
       message: "I stuck it close, let's get some birds",
     })
-    .stream(({ content }) => process.stdout.write( content ))
+    .stream( chunk => {
+      if ( chunk.type === "message" ) process.stdout.write( chunk.content )
+    })
     .then(() => console.log("done"))
     .catch(console.error)
 }
@@ -274,9 +286,6 @@ main();
 import { DSL } from "@k-apps.io/llm-dsl";
 
 const main = () => {
-
-  // const files = collectFilesInDir( `${ __dirname }/src` );
-
   const LLM = new ChatGPT( {} );
 
   const chat = new DSL<PromptOptions, Context>( {
@@ -329,9 +338,9 @@ const main = () => {
       })
     })
     .join()
-    .stream( ( { content, chatId, messageId } ) => {
-      process.stdout.write( content );
-    } )
+    .stream( chunk => {
+      if ( chunk.type === "message" ) process.stdout.write( chunk.content )
+    })
     .then( () => {
       console.log( "done" );
     } )
@@ -348,8 +357,9 @@ main();
 the DSL requires a `storage` mechanism which manages saving and retrieving chats from a data store. This package includes `LocalStorage` which will save the chats to the local file system. 
 
 `LocalStorage` requires an environment variable `CHATS_DIR` where the chats will be stored as `{id}.json` files 
+> CHATS_DIR will not be created automatically
 ```text
-// .env
+# .env
 CHATS_DIR=/opt/chats
 ```
 
@@ -363,7 +373,7 @@ const MyAPI: ChatStorage = {
   getById: ( id: string ): Promise<Chat> => {
     return new Promise<Chat>( ( resolve, reject ) => {
       /**
-       * TODO: retrieve a new chat
+       * TODO: retrieve an existing chat
        */
       reject();
     } );

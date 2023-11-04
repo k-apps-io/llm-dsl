@@ -389,9 +389,8 @@ const MyAPI: ChatStorage = {
 }
 
 const main = () => {
-  const storage = MyAPI();
   const chat = new DSL({
-    storage: storage,
+    storage: MyAPI,
     // ...
   });
 }

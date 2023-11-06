@@ -1,7 +1,23 @@
-function sayHello() {
-  return "Hello, World!";
-}
+import { ChatGPT, Options } from "@k-apps.io/llm-dsl-chatgpt";
+import { DSL } from "../src/DSL";
+import { LocalStorage } from "../src/Storage";
 
-test( "sayHello should return 'Hello, World!'", () => {
-  expect( sayHello() ).toBe( "Hello, World!" );
+const chat = new DSL<Options, any>( {
+  llm: new ChatGPT( {} ),
+  storage: LocalStorage,
+  options: {
+    model: "gpt-3.5-turbo"
+  },
+  metadata: {}
+} );
+describe( "'Hello, World!'", () => {
+  it( 'hello world', async () => {
+    await chat
+      .clone()
+      .prompt( {
+        message: "hello world"
+      } )
+      .execute();
+    expect( true ).toBe( true );
+  } );
 } );

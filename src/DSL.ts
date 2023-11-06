@@ -1,6 +1,6 @@
 import { cloneDeep } from "lodash";
 import { v4 as uuid } from "uuid";
-import { Chat, Message as ChatMessage, Visibility } from "./Chat";
+import { Chat, Message as ChatMessage, Message, Visibility } from "./Chat";
 import extractBlocks from "./CodeBlocks";
 import ChatStorage from "./Storage";
 
@@ -17,16 +17,16 @@ export interface Function {
 }
 
 export interface Stream {
+  user?: string;
   messages: Prompt[];
   functions?: Function[];
 }
 
 export interface Options {
-  key?: string;
   message: string;
+  key?: string;
+  visibility?: Visibility;
 }
-
-export interface Context { }
 
 export type TextResponse = {
   type: "text";
@@ -73,7 +73,7 @@ export abstract class LLM {
   abstract stream( config: Stream ): AsyncIterable<TextResponse | FunctionResponse>;
 }
 
-export class DSL<T extends Options, C extends Context> {
+export class DSL<T extends Options, C extends any> {
 
   llm: LLM;
   storage: ChatStorage;
@@ -86,16 +86,18 @@ export class DSL<T extends Options, C extends Context> {
     promise: () => Promise<void>;
   }> = [];
   pipelineCursor: number = -1; // manages current position in the pipeline
-  _context?: C;
+  context?: C = undefined;
   type: "chat" | "sidebar" = "chat";
+  user?: string = undefined;
 
   out: ( data: ChatChunk | MessageChunk ) => void = () => { };
 
-  constructor( { llm, storage, name, options }: {
+  constructor( { llm, storage, name, options, metadata }: {
     llm: LLM;
     storage: ChatStorage;
     options: Omit<T, "message">;
     name?: string;
+    metadata?: { [ key: string ]: any; };
   } ) {
     this.llm = llm;
     this.storage = storage;
@@ -104,16 +106,9 @@ export class DSL<T extends Options, C extends Context> {
       id: uuid(),
       name: name || "Not Named",
       messages: [],
-      sidebars: []
+      sidebars: [],
+      metadata: metadata
     };
-  }
-
-  public set context( v: C ) {
-    this._context = v;
-  }
-
-  public get context(): C | undefined {
-    return this._context;
   }
 
   private _prompt( options: T ) {
@@ -152,16 +147,17 @@ export class DSL<T extends Options, C extends Context> {
         role: "user",
         content: options.message,
         tokens: messageTokens,
-        visibility: Visibility.OPTIONAL,
+        visibility: options.visibility || Visibility.OPTIONAL,
         createdAt: new Date(),
         updatedAt: new Date(),
-        included: messages.map( m => m.id! )
+        included: messages.map( m => m.id! ),
+        user: this.user
       } );
-      await this.storage.save( this.chat );
       this.out( { type: "message", content: options.message + "\n", chat: this.chat.id!, message: messageId } );
       const stream = await this.llm.stream( {
         messages: [ ...messages.map( m => ( { prompt: m.content, role: m.role } ) ), { prompt: options.message, role: "user" } ],
         functions: Object.keys( this.functions ).map( k => this.functions[ k ] ),
+        user: this.user,
         ...options
       } );
       let message = "";
@@ -193,7 +189,6 @@ export class DSL<T extends Options, C extends Context> {
         createdAt: new Date(),
         updatedAt: new Date()
       } );
-      await this.storage.save( this.chat );
       if ( ( func as any ) !== undefined ) {
         // todo parse args as JSON object
         // todo validate / map the args to the 
@@ -210,15 +205,59 @@ export class DSL<T extends Options, C extends Context> {
     } );
   }
 
-  private async sidebar( { name }: { name?: string; } ) {
+  /**
+   * create a sidebar associated with this chat, the metadata of the sidebar
+   * will inherit the main chat's metadaa in addition to `parent` which will
+   * be the id of the main chant
+   * 
+   * @param name: the name of the sidebar chat 
+   * @returns 
+   */
+  private sidebar( { name }: { name?: string; } ) {
     // create a new chat and have a sidebar conversation
-    const sidebar = new DSL<T, C>( { llm: this.llm, storage: this.storage, options: this.options, name: `Sidebar - ${ name || this.chat.name }` } );
+    const sidebar = new DSL<T, C>( {
+      llm: this.llm,
+      storage: this.storage,
+      options: this.options,
+      name: name || `Sidebar - ${ this.chat.name }`,
+      metadata: {
+        ...this.chat.metadata,
+        parent: this.chat.id!
+      }
+    } );
     this.chat.sidebars.push( sidebar.chat.id! );
+    sidebar.chat.user = this.chat.user;
     sidebar.functions = this.functions;
     sidebar.type = "sidebar";
-    await sidebar.storage.save( sidebar.chat );
-    await this.storage.save( this.chat );
     return sidebar;
+  }
+
+  /**
+   * 
+   * @param id: a user id to associate with the chat and new prompts
+   */
+  setUser( id: string ) {
+    this.user = id;
+    if ( this.chat.user === undefined ) this.chat.user = this.user;
+    return this;
+  }
+
+  /**
+   * add a message to the end of the chat without generating a prompt. This action occurrs
+   * immediately; outside of the chain of commands
+   * 
+   * @param message - a custom message to add to the chat
+   * @returns 
+   */
+  push( message: Omit<Message, "id" | "createdAt" | "updatedAt" | "tokens"> ) {
+    this.chat.messages.push( {
+      ...message,
+      id: uuid(),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      tokens: this.llm.tokens( message.content )
+    } );
+    return this;
   }
 
   /**
@@ -320,55 +359,74 @@ export class DSL<T extends Options, C extends Context> {
   }
 
   /**
-   * a hook to direclty access the LLM response of the latest prompt and establish expectations of the response. 
-   * When reject is called, provide a message with your criteria and a sidebar chat will be created to resolve the
-   * dispute of the response and your expectations. 
+   * Establish expectations for the response from the Language Model (LLM) and initiate a dispute resolution process if necessary.
+   * When the 'reject' method is called, you can provide a message outlining your criteria, and a sidebar chat will be created to resolve
+   * any discrepancies between the LLM's response and your expectations.
    * 
-   * This sidebar will continue to pass the LLM responses through the expect call until the response passes or the retries are exceeded
+   * The sidebar chat will persistently evaluate LLM responses through the 'expect' method until the response aligns with your expectations
+   * or the maximum retry limit is reached.
    * 
-   * @param func 
-   * @returns {object} - the chat object   
+   * @param {function(response: ChatMessage): Promise<void>} func - A function to assess the LLM response.
+   * @returns {object} - The chat object that can be used for further interactions.
    */
   expect( func: ( response: ChatMessage ) => Promise<void> ) {
     const promise = () => {
-      return new Promise<void>( ( resolve, reject ) => {
-        func( this.chat.messages[ this.chat.messages.length - 1 ] )
-          .then( resolve )
-          .catch( async expectation => {
+      return new Promise<void>( async ( resolve, reject ) => {
+        const expectationStack: string[] = [];
+        const maxCallstack = 10;
+        let targetMessage = this.chat.messages[ this.chat.messages.length - 1 ];
+        let sidebar: DSL<T, C> | null = null;
+        for await ( const i of Array( maxCallstack ).fill( null ).map( ( _v, i ) => i ) ) {
+          try {
+            await func( targetMessage );
+            if ( sidebar !== null ) {
+              // a sidebar chat was used, replace the lastest main response with the targetMessage ( the latest response that passed the expectations )
+              this.chat.messages[ this.chat.messages.length - 1 ].visibility = Visibility.HIDDEN;
+              this.chat.messages.push( targetMessage );
+            }
+            resolve();
+            break;
+          } catch ( expectation ) {
             if ( typeof expectation !== "string" ) {
               reject( expectation );
-              return;
+              break;
             }
-            const $this = this;
-            const sidebar = await $this.sidebar( { name: `Expectation - ${ expectation }` } );
-            sidebar.rules = $this.rules;
-            sidebar.chat.messages = [
-              // include the rules
-              ...this.chat.messages.filter( m => $this.rules.includes( m.id! ) ),
-              // include the previous user and assitant message
-              this.chat.messages[ this.chat.messages.length - 2 ],
-              this.chat.messages[ this.chat.messages.length - 1 ],
-            ];
-            sidebar
-              .prompt( { message: `the prior response did not meet expectations; specifically - '${ expectation }'. Please update the prior response focusing on my expecations` } )
-              .response( ( message ) => {
-                return new Promise<void>( ( _resolve, __ ) => {
-                  func( message )
-                    .then( async () => {
-                      $this.chat.messages[ this.chat.messages.length - 1 ].visibility = Visibility.HIDDEN;
-                      $this.chat.messages.push( message );
-                      await $this.storage.save( $this.chat );
+            expectationStack.push( expectation );
+            if ( sidebar === null ) {
+              sidebar = this.sidebar( { name: `Expectation - ${ expectation }` } );
+              sidebar.rules = this.rules;
+              sidebar.chat.messages = [
+                // include the previous user and assitant message
+                this.chat.messages[ this.chat.messages.length - 2 ],
+                this.chat.messages[ this.chat.messages.length - 1 ],
+              ];
+            }
+            const _promise = () => {
+              return new Promise<void>( ( _resolve, _reject ) => {
+                sidebar!
+                  .prompt( { message: `the prior response did not meet expectations; ${ expectation }. Please regenerate the prior response` } )
+                  .response( ( message ) => {
+                    return new Promise<void>( ( __resolve ) => {
+                      targetMessage = message;
                       _resolve();
-                      resolve();
-                    } )
-                    .catch( error => {
-                      reject( `Failed Expectations - ${ expectation }` );
                     } );
-                } );
-              } )
-              .stream( $this.out )
-              .catch( reject );
-          } );
+                  } )
+                  .stream( this.out )
+                  .then( () => _resolve() )
+                  .catch( _reject );
+              } );
+            };
+            try {
+              await _promise();
+            } catch ( error ) {
+              reject( error );
+              break;
+            }
+          };
+        }
+        if ( expectationStack.length >= maxCallstack ) {
+          reject( `Expect Callstack exceeded - ${ maxCallstack }. Refine your prompt and/or adjust your expectations` );
+        }
       } );
     };
     this.pipeline.push( { command: "expect", promise } );
@@ -488,25 +546,36 @@ export class DSL<T extends Options, C extends Context> {
   }
 
   /**
+   * save the chat to storage, this is 
+   * 
+   * @returns {Promise}
+   */
+  save() {
+    return this.storage.save( this.chat );
+  }
+
+  /**
    * executes the chat
    * 
    * @returns {Promise}
    */
   async execute() {
     return new Promise<void>( async ( resolve, reject ) => {
+      // todo validate the commands e.g. a branchForEach as a join
       try {
         let hasNext = true;
-        this.pipelineCursor = 0;
         this.out( { type: this.type, chat: this.chat.id!, name: this.chat.name, state: "open" } );
         while ( hasNext ) {
+          this.pipelineCursor += 1;
           const stage = this.pipeline[ this.pipelineCursor ];
           if ( stage === undefined ) break;
-          const { command, promise } = stage;
+          const { promise } = stage;
           await promise();
-          this.pipelineCursor += 1;
         }
         resolve();
+        this.storage.save( this.chat );
       } catch ( error ) {
+        this.storage.save( this.chat );
         this.out( { type: "message", chat: this.chat.id!, message: "", content: String( error ) } );
         reject( error );
       }

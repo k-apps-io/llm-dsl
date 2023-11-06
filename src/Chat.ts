@@ -74,6 +74,12 @@ export interface Message {
   codeBlocks?: CodeBlock[];
 
   /**
+   * a id associated with a user that created the message
+   * @type {string}
+   */
+  user?: string;
+
+  /**
    * The time the message was created.
    * @type {Date}
    */
@@ -120,4 +126,14 @@ export interface Chat {
    * @type {Message[]}
    */
   messages: Message[];
+
+  /**
+   * a id associated with a user whom created the chat
+   */
+  user?: string;
+
+  /**
+   * optional metadata to associate with the chat
+   */
+  metadata?: { [ key: string ]: any; };
 }

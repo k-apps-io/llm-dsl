@@ -1,6 +1,6 @@
 {
   "name": "@k-apps.io/llm-dsl",
-  "version": "1.0.8",
+  "version": "1.0.10",
   "description": "a DSL for Large Language Models (LLM)",
   "main": "dist/index.js",
   "scripts": {
@@ -24,6 +24,7 @@
   },
   "homepage": "https://github.com/k-apps-io/llm-dsl#readme",
   "devDependencies": {
+    "@k-apps.io/llm-dsl-chatgpt": "^1.0.7",
     "@types/jest": "^29.5.1",
     "@types/lodash": "^4.14.200",
     "@types/uuid": "^9.0.6",

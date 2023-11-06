@@ -108,7 +108,10 @@ main();
 ```
 
 # Functions
-a `function` can be defined in the chain of commands. The LLM may then call this function with the result provided back as a new `Message`
+
+In your DSL script, you can define custom `functions` that the Language Model (LLM) may call, and the results will be returned as new `Message` objects. This feature allows you to create custom logic and interactions within your conversation with the LLM.
+
+To define a function, use the `.function` method as shown below:
 
 ```javascript
 import { DSL, Rule, Options } from "@k-apps.io/llm-dsl";
@@ -116,29 +119,46 @@ import { DSL, Rule, Options } from "@k-apps.io/llm-dsl";
 const main = () => {
   const chat = new DSL({});
   chat
-    .function({
+    .function<{ unit?: "Fahrenheit" | "Celsius"; }>( {
       name: "getTheCurrentWeather",
-      parameters: { type: "object", args: {}},
       description: "helps the AI model determine the current weather",
-      func: ( ) => {
-        return new Promise<Options>(( resolve, reject) => {
-          // TODO - go outside
-          resolve({
-            message: "it's snowing!"
-          })
-        })
+      parameters: {
+        "type": "object",
+        "properties": {
+          "unit": {
+            "type": "string",
+            "enum": [ "Fahrenheit", "Celsius" ]
+          }
+        }
+      },
+      func: ( { unit = "Fahrenheit", context } ) => {
+        return new Promise( ( resolve, reject ) => {
+          const weather = {
+            temperature: unit === "Fahrenheit" ? 24 : 5,
+            unit: unit,
+            percipitation: "it's snowing"
+          };
+          resolve( {
+            message: `here is the current weather report \`\`\`json ${ JSON.stringify( weather ) }\`\`\``
+          } );
+        } );
       }
-    })
-    .prompt({
+    } )
+    .rule( {
+      name: "Temperature",
+      requirement: "all temperature readings must be in Celsius"
+    } )
+    .prompt( {
       message: "what's the weather like today?"
-    })
+    } )
     .stream( chunk => {
-      if ( chunk.type === "message" ) process.stdout.write( chunk.content )
-    })
+      if ( chunk.type === "message" ) fileStream.write( chunk.content );
+    } )
     .then(() => console.log("done"))
     .catch(console.error)
 }
 
+main();
 ```
 
 # Prompting
@@ -153,6 +173,12 @@ const main = () => {
     .prompt({
       message: "Why did the football team go to the bank?"
     })
+    .prompt( context => {
+      // a prompt can also access the context of the chat via a `CommandFunction`
+      return {
+        message: `here is a hint: ${context}`
+      }
+    })
     .stream( chunk => {
       if ( chunk.type === "message" ) process.stdout.write( chunk.content )
     })
@@ -164,7 +190,11 @@ main();
 ```
 
 # Context
-each instance of the DSL has a `context` attribute to pass data between each command. To set the context you can use the commands [response](#response) or [expect](#expect).
+
+In your DSL script, the `context` is shared space that enables the seamless exchange of information between different commands and prompts. It's a vital tool for tasks that involve gathering, adjusting, or retrieving data across multiple interactions. The `context` ensures your conversation flows cohesively and empowers you to manage and transfer artifacts effortlessly.
+
+To set the `context`, you can use commands like [response](#response) and [expect](#expect).
+
 
 ## response
 `response` provides direct accesss the response of a prompt, it gives you control to continue the chain of commands by calling `resolve` or stop by calling `reject`
@@ -175,18 +205,33 @@ import { DSL, Options } from "@k-apps.io/llm-dsl";
 const main = () => {
   const chat = new DSL<Options, string>({});
   chat
-    .rule({
-      name: "Wrong Answers Only",
-      requirement: "set the sarcasm level to the max and provide wrong answers only"
-    })
     .prompt({
       message: "finish the sentence 'one does not'"
     })
     .response( response => new Promise<void>(( resolve, reject ) => {
-      // do what you need
-      chat.context = "";
+      if ( response.content.includes("Mordor")) {
+        chat.context = {
+          isChill: true,
+        }
+      } else {
+        chat.context = {
+          isChill: false,
+          tasks: [ "watch LOTR" ]
+        }
+      }
       resolve();
     }))
+    .prompt( context => {
+      if ( context.isChill ) {
+        return {
+          message: "great answer"
+        }
+      } else {
+        return {
+          message: "I need you to watch LOTR"
+        }
+      }
+    })
     .stream( chunk => {
       if ( chunk.type === "message" ) process.stdout.write( chunk.content )
     })
@@ -261,7 +306,7 @@ const main = () => {
   const chat = new DSL({});
   chat
     /** continued from above */
-    .promptForEach( ( context: Club[]) => {
+    .promptForEach( ( context: Club[] ) => {
       return context.map(({ club, yardage}, index ) => {
         return {
           message: `I expect the ruff to take about 40% off the distance of the club, what is the new yardarge for ${club}?`
@@ -286,6 +331,7 @@ const main = () => {
 
 main();
 ```
+
 ## branchForEach
 `branchForEach` similary enables you to use the chat `context` to generate a series of commands. The series is determined by the next `join` command. Each command between the `branchForEach` and `join` will be executed for each branch created.
 
@@ -314,29 +360,41 @@ const main = () => {
       return new Promise<void>( ( resolve, reject ) => {
         if ( response.codeBlocks === undefined ) {
           reject( "a code block was requested" );
-        } else if ( response.codeBlocks.length > 1 ) {
+        } else {
+          resolve();
+        }
+      }
+    })
+    .expect( response => {
+      return new Promise<void>( ( resolve, reject ) => {
+        if ( response.codeBlocks.length > 1 ) {
           reject( "only send 1 code block" );
         } else {
-          const block = response.codeBlocks[ 0 ];
-          if ( block.lang !== "json" ) {
-            reject( "a json code block was expected" );
-          } else {
-            const data = JSON.parse( block.code );
-            chat.context = data.cities;
-            resolve();
-          }
+          resolve()
         }
-      } );
-    } )
+      }
+    })
+    .expect( response => {
+      return new Promise<void>( ( resolve, reject ) => {
+        const block = response.codeBlocks[ 0 ];
+        if ( block.lang !== "json" ) {
+          reject( "a json code block was expected" );
+        } else {
+          const data = JSON.parse( block.code );
+          chat.context = data.cities;
+          resolve();
+        }
+      })
+    })
     .branchForEach( context => {
       return context.map( city => {
         return {
-          message: `consider the following city, ${ city } which country is this located in?`
+          message: `consider the following city, ${ city } and pick a monument, artificat or famous person in this city we'll call this the target`
         };
       } );
     } )
     .prompt( {
-      message: "consider the RPG table top game Sprawl, create a new mission in this city as plaintext"
+      message: "consider the RPG table top game Sprawl, create a new mission in this city that involves our target"
     } )
     .response( response => {
       return new Promise<void>(( resolve, reject ) => {
@@ -361,7 +419,7 @@ main();
 ```
 
 # Storage
-the DSL requires a `storage` mechanism which manages saving and retrieving chats from a data store. This package includes `LocalStorage` which will save the chats to the local file system. 
+chats can be stored which requires a `storage` mechanism. This mechanism manages saving and retrieving chats from a data store. This package includes `LocalStorage` which will save the chats to the local file system and `NoStorage` which does not save any chats. 
 
 `LocalStorage` requires an environment variable `CHATS_DIR` where the chats will be stored as `{id}.json` files 
 > CHATS_DIR will not be created automatically
@@ -369,6 +427,7 @@ the DSL requires a `storage` mechanism which manages saving and retrieving chats
 # .env
 CHATS_DIR=/opt/chats
 ```
+
 
 ## Custom
 you can define your own storage mechanism by implementing the `Storage` interface

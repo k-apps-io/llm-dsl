@@ -13,15 +13,15 @@ const chat = new DSL<Options, any>( {
   metadata: {}
 } );
 describe( ".expect", () => {
-  it( 'get json', async () => {
+  it( 'expectJSON', async () => {
     const $chat = chat.clone();
-    const fileStream = createWriteStream( `./__tests__/${ $chat.chat.id }.log` );
+    const fileStream = createWriteStream( `./__tests__/expectJSON.log` );
     await $chat
       .rule( CODE_BLOCK_RULE )
       .prompt( {
         message: "generate a JSON Array of city names"
       } )
-      .expect( response => new Promise<void>( ( resolve, reject ) => {
+      .expect( ( response ) => new Promise<void>( ( resolve, reject ) => {
         const blocks = response.codeBlocks || [];
         if ( blocks.length === 0 ) {
           reject( "a json code block was expected" );
@@ -48,11 +48,11 @@ describe( ".expect", () => {
     fileStream.end();
   }, 100000 );
 
-  it( 'exceeds expect callstack', async () => {
+  it( 'expectCallstackExceeded', async () => {
     let fileStream: any = null;
     try {
       const $chat = chat.clone();
-      fileStream = createWriteStream( `./__tests__/${ $chat.chat.id }.log` );
+      fileStream = createWriteStream( `./__tests__/expectCallstackExceeded.log` );
       await $chat
         .rule( CODE_BLOCK_RULE )
         .prompt( {

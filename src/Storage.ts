@@ -30,4 +30,13 @@ export const LocalStorage: ChatStorage = {
   }
 };
 
+export const NoStorage: ChatStorage = {
+  getById: function ( id: string ): Promise<Chat> {
+    throw 'Not Implemented - Choose an alternative storage engine';
+  },
+  save: function ( chat: Chat ): Promise<void> {
+    return new Promise<void>( ( resolve, reject ) => resolve() );
+  }
+};
+
 export default ChatStorage;

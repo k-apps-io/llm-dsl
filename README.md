@@ -61,9 +61,9 @@ const main = () => {
         return { message: message };
       } );
     } )
-    .stream( ( { content, chatId, messageId } ) => {
-      process.stdout.write( content );
-    } )
+    .stream( chunk => {
+      if ( chunk.type === "message" ) process.stdout.write( chunk.content )
+    })
     .then( () => {
       console.log( "done" );
     } )
@@ -165,10 +165,11 @@ main();
 a `prompt` is the main form of interacting with the LLM, use this command to send a message and generate a response
 
 ```javascript
-import { DSL } from "@k-apps.io/llm-dsl";
+import { DSL, Options } from "@k-apps.io/llm-dsl";
 
 const main = () => {
-  const chat = new DSL({});
+  const chat = new DSL<Options, string>({});
+  chat.context = "what is something the bank has that could be used on the football field?";
   chat
     .prompt({
       message: "Why did the football team go to the bank?"
@@ -191,9 +192,11 @@ main();
 
 # Context
 
-In your DSL script, the `context` is shared space that enables the seamless exchange of information between different commands and prompts. It's a vital tool for tasks that involve gathering, adjusting, or retrieving data across multiple interactions. The `context` ensures your conversation flows cohesively and empowers you to manage and transfer artifacts effortlessly.
+In your DSL script, the `context` is a shared space that enables the seamless exchange of information between different commands and prompts. It's a vital tool for tasks that involve gathering, adjusting, or retrieving data across multiple interactions. The `context` ensures your conversation flows cohesively and empowers you to manage and transfer artifacts effortlessly.
 
 To set the `context`, you can use commands like [response](#response) and [expect](#expect).
+
+To use the `context`, checkout [prompt](#prompting), [promptForEach](#promptforeach) and [branchForEach](#branchforeach)
 
 
 ## response
@@ -243,7 +246,7 @@ main();
 ```
 
 ## expect
-The `expect` function is another way to access the response of a prompt and set expectations for it. When working with the Language Model (LLM), you can use this command to define specific criteria that the response should meet. If these criteria are not met, you have the option to call `reject("with your reason")` to initiate a dispute resolution process. On the other hand, if the response aligns with your expectations, you can use the `resolve()` method to continue the chain of interactions.
+The `expect` function is another way to access the response of a prompt and set expectations for it. When working with the Language Model (LLM), you can use this command to define specific criteria that the response should meet. If these criteria are not met, you have the option to call `reject("with your reason")` to initiate a [dispute resolution](#dispute-resolution) process. On the other hand, if the response aligns with your expectations, you can use the `resolve()` method to continue the chain of interactions.
 
 This command plays a pivotal role in ensuring that the Language Model's responses are in line with your desired outcomes. It serves as a valuable tool for quality control and enables the creation of custom interactions with the model. By setting clear expectations and handling responses accordingly, you can shape the behavior of the model to meet your specific needs.
 
@@ -357,34 +360,10 @@ const main = () => {
       message: "generate a list of cities implementing the ```typescript interface { cities: string[] }``` as a json code block"
     } )
     .expect( response => {
-      return new Promise<void>( ( resolve, reject ) => {
-        if ( response.codeBlocks === undefined ) {
-          reject( "a code block was requested" );
-        } else {
-          resolve();
-        }
-      }
-    })
-    .expect( response => {
-      return new Promise<void>( ( resolve, reject ) => {
-        if ( response.codeBlocks.length > 1 ) {
-          reject( "only send 1 code block" );
-        } else {
-          resolve()
-        }
-      }
-    })
-    .expect( response => {
-      return new Promise<void>( ( resolve, reject ) => {
-        const block = response.codeBlocks[ 0 ];
-        if ( block.lang !== "json" ) {
-          reject( "a json code block was expected" );
-        } else {
-          const data = JSON.parse( block.code );
-          chat.context = data.cities;
-          resolve();
-        }
-      })
+      // todo - set the expectations
+      const data = JSON.parse( response.codeBlocks![0].code );
+      chat.context = data.cities;
+      resolve();
     })
     .branchForEach( context => {
       return context.map( city => {

@@ -20,13 +20,31 @@ export interface Function {
 export interface Stream {
   user?: string;
   messages: Prompt[];
-  functions?: Function[];
+  functions: Function[];
+  response_tokens: number;
 }
 
 export interface Options {
+  /**
+   * the text message to send to the LLM
+   */
   message: string;
+  /**
+   * an optional key that identifies the prompt. If the key is re-used the latest 
+   * prompt will overwrite the prior
+   */
   key?: string;
+  /**
+   * the visibility of the prompt, this value will not take effect until
+   * after the message is sent to the LLM for a response
+   */
   visibility?: Visibility;
+  /**
+   * the number of tokens to reserve for the response, this is linked with the
+   * max token limit of the model. The difference between these two will be used 
+   * for limiting the context to provide with the prompt
+   */
+  response_tokens?: number;
 }
 
 export type TextResponse = {
@@ -52,14 +70,18 @@ export interface MessageChunk {
   chat: string;
   message: string;
 }
+export interface CommandChunk {
+  type: "command";
+  content: string | Uint8Array;
+}
 
-export type CommandFunction<C, F> = ( context?: C ) => F;
+export type CommandFunction<C, T extends Options, F> = ( context: C | undefined, chat: DSL<T, C> ) => F;
 
 export abstract class LLM {
 
   constructor() { }
   /**
-   * cacluates the total number of tokens a string
+   * cacluates the total number of tokens for a string
    * 
    * @param {string} text : a string to evaluate the number of tokens
    * @returns {number} : the number of tokens in the string
@@ -83,17 +105,18 @@ export class DSL<T extends Options, C extends any> {
   options: Omit<T, "message">;
   chat: Chat;
   rules: string[] = [];
-  functions: { [ key: string ]: ( Function & { func: ( args: any ) => Promise<Options | T>; } ); } = {};
-  pipeline: Array<{
+  private functions: { [ key: string ]: ( Function & { func: ( args: any ) => Promise<Options | T>; } ); } = {};
+  private pipeline: Array<{
     command: string;
     promise: () => Promise<void>;
   }> = [];
-  pipelineCursor: number = -1; // manages current position in the pipeline
+  private pipelineCursor: number = -1; // manages current position in the pipeline
   context?: C = undefined;
   type: "chat" | "sidebar" = "chat";
   user?: string = undefined;
-
-  out: ( data: ChatChunk | MessageChunk ) => void = () => { };
+  private maxTokens: number = 4000;
+  private maxCallStack: number = 10;
+  private out: ( data: ChatChunk | MessageChunk | CommandChunk ) => void = () => { };
 
   constructor( { llm, storage, name, options, metadata }: {
     llm: LLM;
@@ -114,18 +137,25 @@ export class DSL<T extends Options, C extends any> {
     };
   }
 
+  /**
+   * 
+   * @param options : the prompt options
+   * @returns Promise<void>
+   */
   private _prompt( options: T ) {
     return () => new Promise<void>( async ( resolve, reject ) => {
       const messageTokens = this.llm.tokens( options.message );
-      const limit = 700; // todo
+      const limit = this.maxTokens - ( options.response_tokens || 700 );
 
       // reduce the messages to the latest keys
       let messages: Chat[ "messages" ] = cloneDeep( this.chat.messages )
         .reduce( ( prev, curr ) => {
           if ( curr.key !== undefined ) {
             const prevIndex = prev.map( p => p.key ).indexOf( curr.key );
+            // remove the preivous key
             if ( prevIndex > -1 ) prev.splice( prevIndex );
           }
+          // add the message
           prev.push( curr );
           return prev;
         }, [] as Chat[ "messages" ] );
@@ -133,6 +163,8 @@ export class DSL<T extends Options, C extends any> {
       const required = messages.filter( m => m.visibility === Visibility.REQUIRED );
       const requiredTokens = required.reduce( ( total, curr ) => total + curr.tokens, 0 );
       let currentTokens = requiredTokens + messageTokens;
+
+      // build the message window
       messages = [
         ...required
         , ...messages
@@ -161,6 +193,7 @@ export class DSL<T extends Options, C extends any> {
         messages: [ ...messages.map( m => ( { prompt: m.content, role: m.role } ) ), { prompt: options.message, role: "user" } ],
         functions: Object.keys( this.functions ).map( k => this.functions[ k ] ),
         user: this.user,
+        response_tokens: options.response_tokens || 700,
         ...options
       } );
       let message = "";
@@ -196,7 +229,7 @@ export class DSL<T extends Options, C extends any> {
         const { func: promise, parameters, name } = func!;
         const params = args !== "" ? JSON.parse( args! ) : {};
         // todo validate / map the args to the 
-        const prompt = await promise( { ...params, context: this.context } );
+        const prompt = await promise( { ...params, context: this.context, chat: this } );
         this.pipeline = [
           ...this.pipeline.slice( 0, this.pipelineCursor + 1 ),
           { command: name, promise: this._prompt( { ...this.options, ...prompt as T } ) },
@@ -230,6 +263,7 @@ export class DSL<T extends Options, C extends any> {
     this.chat.sidebars.push( sidebar.chat.id! );
     sidebar.chat.user = this.chat.user;
     sidebar.functions = this.functions;
+    sidebar.context = this.context; // todo
     sidebar.type = "sidebar";
     return sidebar;
   }
@@ -241,6 +275,37 @@ export class DSL<T extends Options, C extends any> {
   setUser( id: string ) {
     this.user = id;
     if ( this.chat.user === undefined ) this.chat.user = this.user;
+    return this;
+  }
+
+  /**
+   * set the max number of tokens supported by the LLM
+   * 
+   * @param value: number
+   */
+  setMaxTokens( value: number ) {
+    this.maxTokens = value;
+    return this;
+  }
+
+  /**
+   * set the max call stack for commands that loop conditionally i.e. expect
+   * 
+   * @param value: number
+   */
+  setMaxCallStack( value: number ) {
+    this.maxCallStack = value;
+    return this;
+  }
+
+  /**
+   * set the context for the chat
+   * 
+   * @param value 
+   * @returns 
+   */
+  setContex( value: C ) {
+    this.context = value;
     return this;
   }
 
@@ -282,16 +347,22 @@ export class DSL<T extends Options, C extends any> {
   }
 
   /**
-   * create a clone or copy of the chat object
+   * create a clone of the chat pipeline with unique ids and as new object in memory
    * 
    * @returns a clone of the chat object
    */
   clone() {
-    this.chat.id = uuid();
-    this.chat.messages = this.chat.messages.filter( m => this.rules.includes( m.id! ) );
-    this.pipelineCursor = -1;
-    this.chat.sidebars = [];
-    return this;
+    const $this = cloneDeep( this );
+    $this.chat.id = uuid();
+    $this.chat.messages = $this.chat.messages.map( m => {
+      const index = $this.rules.indexOf( m.id! );
+      m.id = uuid();
+      if ( index !== -1 ) {
+        $this.rules[ index ] = m.id;
+      }
+      return m;
+    } );
+    return $this;
   }
 
   /**
@@ -300,8 +371,8 @@ export class DSL<T extends Options, C extends any> {
    * @param options 
    * @returns {object} - the chat object
    */
-  rule( options: ( Rule | CommandFunction<C, Rule> ) ) {
-    const { name, requirement, key }: Rule = typeof options === "function" ? options( this.context ) : options;
+  rule( options: ( Rule | CommandFunction<C, T, Rule> ) ) {
+    const { name, requirement, key }: Rule = typeof options === "function" ? options( this.context, this ) : options;
     const content = `This conversation has the following rule: Rule ${ name } - requirement - ${ requirement }`;
     const ruleId = uuid();
     this.chat.messages.push( {
@@ -324,7 +395,7 @@ export class DSL<T extends Options, C extends any> {
    * @param options 
    * @returns {object} - the chat object
    */
-  function<F>( options: Function & { func: ( args: F & { context?: C; } ) => Promise<Options | T>; } ) {
+  function<F>( options: Function & { func: ( args: F & { context?: C; chat: DSL<T, C>; } ) => Promise<Options | T>; } ) {
     const { name } = options;
     this.functions[ name ] = options;
     return this;
@@ -336,10 +407,10 @@ export class DSL<T extends Options, C extends any> {
    * @param options 
    * @returns {object} - the chat object   
    */
-  prompt( options: ( Options | T | CommandFunction<C, Options | T> ) ) {
+  prompt( options: ( Options | T | CommandFunction<C, T, Options | T> ) ) {
     let promise: () => Promise<void> = () => new Promise<void>( ( resolve, reject ) => reject( "promise is undefined" ) );
     if ( typeof options === "function" ) {
-      promise = this._prompt( { ...this.options, ...options( this.context ) } as T );
+      promise = this._prompt( { ...this.options, ...options( this.context, this ) } as T );
     } else {
       promise = this._prompt( { ...this.options, ...options } as T );
     }
@@ -352,10 +423,10 @@ export class DSL<T extends Options, C extends any> {
    * @param func 
    * @returns {object} - the chat object   
    */
-  response( func: ( response: ChatMessage, context?: C ) => Promise<void> ) {
+  response( func: ( response: ChatMessage, context: C | undefined, chat: DSL<T, C> ) => Promise<void> ) {
     const promise = () => {
       return new Promise<void>( ( resolve, reject ) => {
-        func( this.chat.messages[ this.chat.messages.length - 1 ], this.context )
+        func( this.chat.messages[ this.chat.messages.length - 1 ], this.context, this )
           .then( resolve )
           .catch( reject );
       } );
@@ -375,16 +446,15 @@ export class DSL<T extends Options, C extends any> {
    * @param {function(response: ChatMessage): Promise<void>} func - A function to assess the LLM response.
    * @returns {object} - The chat object that can be used for further interactions.
    */
-  expect( func: ( response: ChatMessage, context?: C ) => Promise<void> ) {
+  expect( func: ( response: ChatMessage, context: C | undefined, chat: DSL<T, C> ) => Promise<void> ) {
     const promise = () => {
       return new Promise<void>( async ( resolve, reject ) => {
         const expectationStack: string[] = [];
-        const maxCallstack = 10;
         let targetMessage = this.chat.messages[ this.chat.messages.length - 1 ];
         let sidebar: DSL<T, C> | null = null;
-        for await ( const i of Array( maxCallstack ).fill( null ).map( ( _v, i ) => i ) ) {
+        for await ( const i of Array( this.maxCallStack ).fill( null ).map( ( _v, i ) => i ) ) {
           try {
-            await func( targetMessage, this.context );
+            await func( targetMessage, this.context, this );
             if ( sidebar !== null ) {
               // a sidebar chat was used, replace the lastest main response with the targetMessage ( the latest response that passed the expectations )
               this.chat.messages[ this.chat.messages.length - 1 ].visibility = Visibility.HIDDEN;
@@ -403,14 +473,16 @@ export class DSL<T extends Options, C extends any> {
               sidebar.rules = this.rules;
               sidebar.chat.messages = [
                 // include the previous user and assitant message
+                ...this.chat.messages.filter( m => m.visibility === Visibility.REQUIRED ),
                 this.chat.messages[ this.chat.messages.length - 2 ],
                 this.chat.messages[ this.chat.messages.length - 1 ],
               ];
             }
+
             const _promise = () => {
               return new Promise<void>( ( _resolve, _reject ) => {
                 sidebar!
-                  .prompt( { message: `the prior response did not meet expectations; ${ expectation }. Please regenerate the prior response` } )
+                  .prompt( { message: `the prior response did not meet expectations; ${ expectation }.` } )
                   .response( ( message ) => {
                     return new Promise<void>( ( __resolve ) => {
                       targetMessage = message;
@@ -430,8 +502,8 @@ export class DSL<T extends Options, C extends any> {
             }
           };
         }
-        if ( expectationStack.length >= maxCallstack ) {
-          reject( `Expect Callstack exceeded - ${ maxCallstack }. Refine your prompt and/or adjust your expectations` );
+        if ( expectationStack.length >= this.maxCallStack ) {
+          reject( `Expect Call Stack exceeded - ${ this.maxCallStack }. Refine your prompt and/or adjust your expectations` );
         }
       } );
     };
@@ -445,10 +517,10 @@ export class DSL<T extends Options, C extends any> {
    * @param func 
    * @returns {object} - the chat object   
    */
-  promptForEach( func: CommandFunction<C, ( Options | T )[]> ) {
+  promptForEach( func: CommandFunction<C, T, ( Options | T )[]> ) {
     const promise = () => {
       return new Promise<void>( ( resolve, reject ) => {
-        const promises = func( this.context ).map( p => {
+        const promises = func( this.context, this ).map( p => {
           return { command: "", promise: this._prompt( { ...this.options, ...p } as T ) };
         } );
         this.pipeline = [
@@ -470,10 +542,10 @@ export class DSL<T extends Options, C extends any> {
    * @param func 
    * @returns {object} - the chat object   
    */
-  branchForEach( func: CommandFunction<C, ( Options | T )[]> ) {
+  branchForEach( func: CommandFunction<C, T, ( Options | T )[]> ) {
     const promise = () => {
       return new Promise<void>( ( resolve, reject ) => {
-        const promises = func( this.context ).map( p => {
+        const promises = func( this.context, this ).map( p => {
           return { command: "", promise: this._prompt( { ...this.options, ...p } as T ) };
         } );
         const joinIndex = this.pipeline.slice( this.pipelineCursor ).map( p => p.command ).indexOf( "join" );
@@ -535,7 +607,7 @@ export class DSL<T extends Options, C extends any> {
    * 
    * @param f 
    */
-  image( f: any ) {
+  image( i: any ) {
     // todo
     throw "chat.image() is Not Implemented";
   }
@@ -546,13 +618,13 @@ export class DSL<T extends Options, C extends any> {
    * @param output 
    * @returns 
    */
-  async stream( output: ( data: ChatChunk | MessageChunk ) => void ) {
+  async stream( output: ( data: ChatChunk | MessageChunk | CommandChunk ) => void ) {
     this.out = output;
     return this.execute();
   }
 
   /**
-   * save the chat to storage, this is 
+   * save the chat to storage
    * 
    * @returns {Promise}
    */
@@ -561,12 +633,12 @@ export class DSL<T extends Options, C extends any> {
   }
 
   /**
-   * executes the chat
+   * executes the pipeline
    * 
    * @returns {Promise}
    */
   async execute() {
-    return new Promise<void>( async ( resolve, reject ) => {
+    return new Promise<DSL<T, C>>( async ( resolve, reject ) => {
       // todo validate the commands e.g. a branchForEach as a join
       try {
         let hasNext = true;
@@ -575,13 +647,14 @@ export class DSL<T extends Options, C extends any> {
           this.pipelineCursor += 1;
           const stage = this.pipeline[ this.pipelineCursor ];
           if ( stage === undefined ) break;
-          const { promise } = stage;
+          const { promise, command } = stage;
+          this.out( { type: "command", content: `command: ${ command }\n` } );
           await promise();
         }
-        resolve();
-        this.storage.save( this.chat );
+        await this.storage.save( this.chat );
+        resolve( this );
       } catch ( error ) {
-        this.storage.save( this.chat );
+        await this.storage.save( this.chat );
         this.out( { type: "message", chat: this.chat.id!, message: "", content: String( error ) } );
         reject( error );
       }

@@ -1,6 +1,6 @@
 {
   "name": "@k-apps.io/llm-dsl",
-  "version": "1.0.11",
+  "version": "1.0.12",
   "description": "a DSL for Large Language Models (LLM)",
   "main": "dist/index.js",
   "scripts": {

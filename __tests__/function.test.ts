@@ -31,9 +31,9 @@ describe( ".function", () => {
           }
         },
         description: "helps the AI model determine the current weather",
-        func: ( { unit = "Fahrenheit", context } ) => {
+        func: ( { unit = "Fahrenheit", context, chat: $this } ) => {
           return new Promise( ( resolve, reject ) => {
-            chat.context = "it's snowing!";
+            $this.context = "it's snowing!";
             const weather = {
               temperature: unit === "Fahrenheit" ? 24 : 5,
               unit: unit,
@@ -53,16 +53,16 @@ describe( ".function", () => {
         message: "what's the weather like today?",
         function_call: { name: "getTheCurrentWeather" }
       } )
-      .response( ( response, context ) => {
+      .response( ( response, context, $this ) => {
         return new Promise<void>( ( resolve, reject ) => {
-          $chat.context = context.includes( "it's snowing!" ) ? "passed" : "failed";
+          $this.context = context.includes( "it's snowing!" ) ? "passed" : "failed";
           resolve();
         } );
       } )
       .stream( chunk => {
-        if ( chunk.type === "message" ) fileStream.write( chunk.content );
+        if ( chunk.type === "message" || chunk.type == "command" ) fileStream.write( chunk.content );
       } );
-    expect( chat.context ).toBe( "passed" );
+    expect( $chat.context ).toBe( "passed" );
     fileStream.end();
-  }, 20000 );
+  }, 60000 );
 } );

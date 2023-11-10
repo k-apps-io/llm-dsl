@@ -18,10 +18,11 @@ describe( ".expect", () => {
     const fileStream = createWriteStream( `./__tests__/expectJSON.log` );
     await $chat
       .rule( CODE_BLOCK_RULE )
+      .setMaxCallStack( 2 )
       .prompt( {
-        message: "generate a JSON Array of city names"
+        message: "generate a JSON Array of 2 city names"
       } )
-      .expect( ( response ) => new Promise<void>( ( resolve, reject ) => {
+      .expect( ( response, context, chat ) => new Promise<void>( ( resolve, reject ) => {
         const blocks = response.codeBlocks || [];
         if ( blocks.length === 0 ) {
           reject( "a json code block was expected" );
@@ -42,7 +43,7 @@ describe( ".expect", () => {
         }
       } ) )
       .stream( chunk => {
-        if ( chunk.type === "message" ) fileStream.write( chunk.content );
+        if ( chunk.type === "message" || chunk.type == "command" ) fileStream.write( chunk.content );
       } );
     expect( true ).toBe( true );
     fileStream.end();
@@ -55,6 +56,7 @@ describe( ".expect", () => {
       fileStream = createWriteStream( `./__tests__/expectCallstackExceeded.log` );
       await $chat
         .rule( CODE_BLOCK_RULE )
+        .setMaxCallStack( 2 )
         .prompt( {
           message: "generate a JSON Array of city names"
         } )
@@ -62,7 +64,7 @@ describe( ".expect", () => {
           reject( "I need different cities" );
         } ) )
         .stream( chunk => {
-          if ( chunk.type === "message" ) fileStream.write( chunk.content );
+          if ( chunk.type === "message" || chunk.type == "command" ) fileStream.write( chunk.content );
         } );
       // it shouldn't succeed
       fileStream.end();

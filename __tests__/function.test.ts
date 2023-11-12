@@ -55,6 +55,10 @@ describe( ".function", () => {
       } )
       .response( ( response, context, $this ) => {
         return new Promise<void>( ( resolve, reject ) => {
+          if ( context === undefined ) {
+            reject( "function did not executed" );
+            return;
+          }
           $this.context = context.includes( "it's snowing!" ) ? "passed" : "failed";
           resolve();
         } );

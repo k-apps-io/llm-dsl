@@ -64,11 +64,9 @@ export interface ChatChunk {
   chat: string;
   state: "open" | "closed";
 }
-export interface MessageChunk {
+export interface MessageChunk extends Omit<Message, "includes" | "tokens" | "codeBlocks" | "createdAt" | "updatedAt"> {
   type: "message";
-  content: string | Uint8Array;
   chat: string;
-  message: string;
 }
 export interface CommandChunk {
   type: "command";
@@ -177,18 +175,20 @@ export class DSL<T extends Options, C extends any> {
           }, [] as Chat[ "messages" ] )
       ].sort( ( a, b ) => a.createdAt.getTime() - b.createdAt.getTime() );
       const messageId = uuid();
-      this.chat.messages.push( {
+      const visibility = options.visibility !== undefined ? options.visibility : Visibility.OPTIONAL;
+      const message: Message = {
         id: messageId,
         role: "user",
         content: options.message,
         tokens: messageTokens,
-        visibility: options.visibility || Visibility.OPTIONAL,
+        visibility: visibility,
         createdAt: new Date(),
         updatedAt: new Date(),
         included: messages.map( m => m.id! ),
         user: this.user
-      } );
-      this.out( { type: "message", content: options.message + "\n", chat: this.chat.id!, message: messageId } );
+      };
+      this.chat.messages.push( message );
+      this.out( { ...message, chat: this.chat.id!, type: "message" } );
       const stream = this.llm.stream( {
         messages: [ ...messages.map( m => ( { prompt: m.content, role: m.role } ) ), { prompt: options.message, role: "user" } ],
         functions: Object.keys( this.functions ).map( k => this.functions[ k ] ),
@@ -196,39 +196,41 @@ export class DSL<T extends Options, C extends any> {
         response_tokens: options.response_tokens || 700,
         ...options
       } );
-      let message = "";
-      let func: Function & { func: ( args: any ) => Promise<Options | T>; } | undefined = undefined;
-      let args: string | undefined = undefined;
+      let response = "";
+      const funcs: Array<Function & { args: string; func: ( args: any ) => Promise<Options | T>; }> = [];
+      const responseId = uuid();
       await ( async () => {
         for await ( const chunk of stream ) {
           if ( chunk.type === "text" ) {
-            this.out( { type: "message", content: chunk.content, chat: this.chat.id!, message: messageId } );
-            message += chunk.content;
+            this.out( {
+              type: "message",
+              role: "assistant",
+              content: chunk.content,
+              chat: this.chat.id!,
+              id: responseId,
+              visibility: Visibility.OPTIONAL
+            } );
+            response += chunk.content;
           } else {
-            func = this.functions[ chunk.name! ];
-            args = chunk.arguments;
-            const content = `call: ${ func.name! }(${ args })`;
-            this.out( { type: "message", content: content, chat: this.chat.id!, message: messageId } );
-            message += content;
+            funcs.push( { ...this.functions[ chunk.name! ], args: chunk.arguments } );
           }
         }
       } )();
-      this.out( { type: "message", content: "\n", chat: this.chat.id!, message: messageId } );
-      const blocks = extractBlocks( message );
+      const blocks = extractBlocks( response );
       this.chat.messages.push( {
-        id: uuid(),
+        id: responseId,
         role: "assistant",
-        content: message,
-        tokens: this.llm.tokens( message ),
+        content: response,
+        tokens: this.llm.tokens( response ),
         visibility: Visibility.OPTIONAL,
         codeBlocks: blocks.length > 0 ? blocks : undefined,
         createdAt: new Date(),
         updatedAt: new Date()
       } );
-      if ( ( func as any ) !== undefined ) {
-        const { func: promise, parameters, name } = func!;
+
+      for ( const func of funcs ) {
+        const { func: promise, parameters, name, args } = func!;
         const params = args !== "" ? JSON.parse( args! ) : {};
-        // todo validate / map the args to the 
         const prompt = await promise( { ...params, context: this.context, chat: this } );
         this.pipeline = [
           ...this.pipeline.slice( 0, this.pipelineCursor + 1 ),
@@ -248,7 +250,7 @@ export class DSL<T extends Options, C extends any> {
    * @param name: the name of the sidebar chat 
    * @returns 
    */
-  private sidebar( { name }: { name?: string; } ) {
+  sidebar( { name }: { name?: string; } ) {
     // create a new chat and have a sidebar conversation
     const sidebar = new DSL<T, C>( {
       llm: this.llm,
@@ -655,7 +657,14 @@ export class DSL<T extends Options, C extends any> {
         resolve( this );
       } catch ( error ) {
         await this.storage.save( this.chat );
-        this.out( { type: "message", chat: this.chat.id!, message: "", content: String( error ) } );
+        this.out( {
+          type: "message",
+          role: "assistant",
+          chat: this.chat.id!,
+          id: "",
+          content: String( error ),
+          visibility: Visibility.OPTIONAL
+        } );
         reject( error );
       }
       this.out( { type: this.type, chat: this.chat.id!, name: this.chat.name, state: "closed" } );

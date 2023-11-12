@@ -1,12 +1,13 @@
 {
   "name": "@k-apps.io/llm-dsl",
-  "version": "1.0.12",
+  "version": "1.2.0",
   "description": "a DSL for Large Language Models (LLM)",
   "main": "dist/index.js",
   "scripts": {
     "test": "jest",
     "build": "tsc",
-    "deploy": "npm run build && npm publish --access public"
+    "deploy-prod": "npm run build && npm publish --access public",
+    "deploy": "npm run build && git add . && git commit -m \"Committing changes before beta deploy\" && npm version prerelease --preid=beta && npm publish --tag beta"
   },
   "repository": {
     "type": "git",

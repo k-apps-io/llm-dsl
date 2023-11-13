@@ -3,7 +3,7 @@ import { DSL } from "../src/DSL";
 import { LocalStorage } from "../src/Storage";
 
 const chat = new DSL<Options, any>( {
-  llm: new ChatGPT( {} ),
+  llm: new ChatGPT( {}, "gpt-3.5-turbo" ),
   storage: LocalStorage,
   options: {
     model: "gpt-3.5-turbo"

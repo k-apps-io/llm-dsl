@@ -3,9 +3,10 @@
  * @enum {number}
  */
 export enum Visibility {
-  HIDDEN,
-  OPTIONAL,
-  REQUIRED
+  SYSTEM, // same as optional however the message is tagged as a system message
+  OPTIONAL, // may be included in the context window given the size and position
+  REQUIRED, // will always be included in the context window
+  EXCLUDE // will be removed from the context window
 }
 
 /**
@@ -41,7 +42,7 @@ export interface Message {
    * The role authoring the message.
    * @type {"user" | "assistant"}
    */
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "system";
 
   /**
    * The key of the message (optional).
@@ -54,12 +55,6 @@ export interface Message {
    * @type {string}
    */
   content: string;
-
-  /** 
-   * The number of tokens in the message.
-   * @type {number}
-   */
-  tokens: number;
 
   /**
    * The visibility status of the message.

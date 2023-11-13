@@ -5,7 +5,7 @@ import { LocalStorage } from "../src/Storage";
 const chat = new DSL<Options, any>( {
   llm: new ChatGPT( {
     timeout: 10000
-  } ),
+  }, "gpt-3.5-turbo" ),
   storage: LocalStorage,
   options: {
     model: "gpt-3.5-turbo",

@@ -8,7 +8,7 @@ import ChatStorage from "./Storage";
 
 export interface Prompt {
   prompt: string;
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "system";
 }
 
 export interface Function {
@@ -17,11 +17,16 @@ export interface Function {
   description: string;
 }
 
+export interface FunctionArguments<O extends Options, L extends { [ key: string ]: unknown; }> {
+  locals: L;
+  chat: DSL<O, L>;
+}
+
 export interface Stream {
   user?: string;
   messages: Prompt[];
   functions: Function[];
-  response_tokens: number;
+  responseSize: number;
 }
 
 export interface Options {
@@ -44,8 +49,20 @@ export interface Options {
    * max token limit of the model. The difference between these two will be used 
    * for limiting the context to provide with the prompt
    */
-  response_tokens?: number;
+  responseSize?: number;
+  role?: Prompt[ "role" ];
 }
+
+export interface Settings {
+  contextWindowSize?: number;
+  minReponseSize?: number;
+  maxCallStack?: number;
+}
+const DEFAULT_SETTINGS = {
+  contextWindowSize: 4000,
+  minReponseSize: 400,
+  maxCallStack: 10,
+};
 
 export type TextResponse = {
   type: "text";
@@ -60,20 +77,22 @@ export type FunctionResponse = {
 
 export interface ChatChunk {
   type: "chat" | "sidebar";
-  name: string;
-  chat: string;
+  id: string;
   state: "open" | "closed";
+  metadata?: { [ key: string ]: unknown; };
 }
-export interface MessageChunk extends Omit<Message, "includes" | "tokens" | "codeBlocks" | "createdAt" | "updatedAt"> {
+export interface MessageChunk extends Omit<Message, "includes" | "codeBlocks" | "createdAt" | "updatedAt"> {
   type: "message";
+  state: "streaming" | "final";
   chat: string;
 }
+
 export interface CommandChunk {
   type: "command";
   content: string | Uint8Array;
 }
 
-export type CommandFunction<C, T extends Options, F> = ( context: C | undefined, chat: DSL<T, C> ) => F;
+export type CommandFunction<L extends { [ key: string ]: unknown; }, O extends Options, F> = ( locals: L, chat: DSL<O, L> ) => F;
 
 export abstract class LLM {
 
@@ -96,39 +115,53 @@ export abstract class LLM {
   abstract stream( config: Stream ): AsyncIterable<TextResponse | FunctionResponse>;
 }
 
-export class DSL<T extends Options, C extends any> {
+export class DSL<O extends Options, L extends { [ key: string ]: unknown; }> {
 
   llm: LLM;
   storage: ChatStorage;
-  options: Omit<T, "message">;
-  chat: Chat;
+  options: Omit<O, "message">;
+  data: Chat;
+  locals: L;
   rules: string[] = [];
-  private functions: { [ key: string ]: ( Function & { func: ( args: any ) => Promise<Options | T>; } ); } = {};
+  type: "chat" | "sidebar" = "chat";
+  user?: string = undefined;
+  settings: {
+    contextWindowSize: number;
+    minReponseSize: number;
+    maxCallStack: number;
+  };
+
+  private functions: {
+    [ key: string ]: (
+      Function & {
+        func: ( args: any ) => Promise<Options | O>;
+        calls: number;
+      }
+    );
+  } = {};
   private pipeline: Array<{
     command: string;
     promise: () => Promise<void>;
   }> = [];
   private pipelineCursor: number = -1; // manages current position in the pipeline
-  context?: C = undefined;
-  type: "chat" | "sidebar" = "chat";
-  user?: string = undefined;
-  private maxTokens: number = 4000;
-  private maxCallStack: number = 10;
   private out: ( data: ChatChunk | MessageChunk | CommandChunk ) => void = () => { };
 
-  constructor( { llm, storage, name, options, metadata }: {
+  constructor( { llm, storage, options, locals, metadata, settings }: {
     llm: LLM;
     storage: ChatStorage;
-    options: Omit<T, "message">;
-    name?: string;
+    options: Omit<O, "message">;
+    locals?: L;
     metadata?: { [ key: string ]: any; };
+    settings?: Settings;
   } ) {
     this.llm = llm;
     this.storage = storage;
     this.options = options;
-    this.chat = {
+    this.locals = locals || {} as L;
+    this.settings = { ...DEFAULT_SETTINGS, ...settings };
+    this.data = {
       id: uuid(),
-      name: name || "Not Named",
+      name: "Not Named", // todo move to metadata
       messages: [],
       sidebars: [],
       metadata: metadata
@@ -140,13 +173,16 @@ export class DSL<T extends Options, C extends any> {
    * @param options : the prompt options
    * @returns Promise<void>
    */
-  private _prompt( options: T ) {
+  private _prompt( options: O ) {
     return () => new Promise<void>( async ( resolve, reject ) => {
       const messageTokens = this.llm.tokens( options.message );
-      const limit = this.maxTokens - ( options.response_tokens || 700 );
+      const responseSize = ( options.responseSize || Math.floor( this.settings.minReponseSize ) );
+      const limit = this.settings.contextWindowSize - responseSize;
 
-      // reduce the messages to the latest keys
-      let messages: Chat[ "messages" ] = cloneDeep( this.chat.messages )
+      // prepare the messages
+      //  reduce to the latest keys
+      //  calculate the message size
+      let messages = ( cloneDeep( this.data.messages ) as Chat[ "messages" ] )
         .reduce( ( prev, curr ) => {
           if ( curr.key !== undefined ) {
             const prevIndex = prev.map( p => p.key ).indexOf( curr.key );
@@ -156,87 +192,126 @@ export class DSL<T extends Options, C extends any> {
           // add the message
           prev.push( curr );
           return prev;
-        }, [] as Chat[ "messages" ] );
+        }, [] as Chat[ "messages" ] )
+        .map( m => {
+          // const size = this.size;
+          const size = this.llm.tokens( m.content );
+          return { ...m, size: size };
+        } )
+        ;
 
       const required = messages.filter( m => m.visibility === Visibility.REQUIRED );
-      const requiredTokens = required.reduce( ( total, curr ) => total + curr.tokens, 0 );
-      let currentTokens = requiredTokens + messageTokens;
+      const functions = Object.keys( this.functions ).map( k => this.functions[ k ] );
+      const requiredTokens = required.reduce( ( total, curr ) => total + curr.size, 0 );
+      const functionTokens = functions.map( ( { name, description } ) => this.llm.tokens( `${ name } ${ description }` ) ).reduce( ( total, curr ) => total + curr, 0 );
+      let totalTokens = requiredTokens + messageTokens + functionTokens;
 
       // build the message window
       messages = [
         ...required
         , ...messages
-          .filter( m => m.visibility === Visibility.OPTIONAL )
+          .filter( m => m.visibility !== Visibility.EXCLUDE )
           .sort( ( a, b ) => b.createdAt.getTime() - a.createdAt.getTime() )
           .reduce( ( prev, curr ) => {
-            const tokens = prev.reduce( ( total, curr ) => total + curr.tokens, 0 );
-            if ( currentTokens + tokens <= limit ) prev.push( curr );
+            if ( totalTokens + curr.size < limit ) {
+              prev.push( curr );
+              totalTokens += curr.size;
+            }
             return prev;
-          }, [] as Chat[ "messages" ] )
+          }, [] as Array<Chat[ "messages" ][ 0 ] & { size: number; }> )
       ].sort( ( a, b ) => a.createdAt.getTime() - b.createdAt.getTime() );
+
       const messageId = uuid();
       const visibility = options.visibility !== undefined ? options.visibility : Visibility.OPTIONAL;
       const message: Message = {
         id: messageId,
         role: "user",
         content: options.message,
-        tokens: messageTokens,
         visibility: visibility,
         createdAt: new Date(),
         updatedAt: new Date(),
         included: messages.map( m => m.id! ),
         user: this.user
       };
-      this.chat.messages.push( message );
-      this.out( { ...message, chat: this.chat.id!, type: "message" } );
+      this.data.messages.push( message );
+      this.out( { ...message, chat: this.data.id!, type: "message", state: "streaming" } ); // todo stream to final
+      this.out( { ...message, chat: this.data.id!, type: "message", state: "final" } ); // todo stream to final
       const stream = this.llm.stream( {
         messages: [ ...messages.map( m => ( { prompt: m.content, role: m.role } ) ), { prompt: options.message, role: "user" } ],
-        functions: Object.keys( this.functions ).map( k => this.functions[ k ] ),
+        functions: functions,
         user: this.user,
-        response_tokens: options.response_tokens || 700,
+        responseSize: responseSize,
         ...options
       } );
       let response = "";
-      const funcs: Array<Function & { args: string; func: ( args: any ) => Promise<Options | T>; }> = [];
+      const funcs: Array<Function & { args: string; func: ( args: any ) => Promise<Options | O>; }> = [];
       const responseId = uuid();
       await ( async () => {
         for await ( const chunk of stream ) {
+          let content: string = "";
           if ( chunk.type === "text" ) {
-            this.out( {
-              type: "message",
-              role: "assistant",
-              content: chunk.content,
-              chat: this.chat.id!,
-              id: responseId,
-              visibility: Visibility.OPTIONAL
-            } );
-            response += chunk.content;
+            content = chunk.content;
           } else {
-            funcs.push( { ...this.functions[ chunk.name! ], args: chunk.arguments } );
+            const func = this.functions[ chunk.name! ];
+            if ( func !== undefined ) funcs.push( { ...func, args: chunk.arguments } );
+            content = `call: ${ chunk.name }(${ chunk.arguments })`;
           }
+          response += content;
+          this.out( {
+            type: "message",
+            state: "streaming",
+            role: "assistant",
+            content: content,
+            chat: this.data.id!,
+            id: responseId,
+            visibility: Visibility.OPTIONAL
+          } );
         }
       } )();
       const blocks = extractBlocks( response );
-      this.chat.messages.push( {
+      this.data.messages.push( {
         id: responseId,
         role: "assistant",
         content: response,
-        tokens: this.llm.tokens( response ),
         visibility: Visibility.OPTIONAL,
         codeBlocks: blocks.length > 0 ? blocks : undefined,
         createdAt: new Date(),
         updatedAt: new Date()
       } );
-
+      this.out( {
+        type: "message",
+        state: "final",
+        role: "assistant",
+        content: response,
+        chat: this.data.id!,
+        id: responseId,
+        visibility: Visibility.OPTIONAL
+      } );
+      let position = 1;
+      const currentCommand = this.pipeline[ this.pipelineCursor ].command;
       for ( const func of funcs ) {
         const { func: promise, parameters, name, args } = func!;
+        const calls = this.functions[ name ].calls;
+        if ( calls > 2 && currentCommand === name ) {
+          reject( `Function Loop - function: ${ name }` );
+          return;
+        }
+        this.functions[ name ].calls += 1;
+        // todo error handling for args
         const params = args !== "" ? JSON.parse( args! ) : {};
-        const prompt = await promise( { ...params, context: this.context, chat: this } );
-        this.pipeline = [
-          ...this.pipeline.slice( 0, this.pipelineCursor + 1 ),
-          { command: name, promise: this._prompt( { ...this.options, ...prompt as T } ) },
-          ...this.pipeline.slice( this.pipelineCursor + 1 )
-        ];
+        const prompt = await promise( { ...params, locals: this.locals, chat: this } );
+        prompt.message = `${ name }(${ JSON.stringify( params ) }) => ${ prompt.message }`;
+        const command = { command: name, promise: this._prompt( { ...this.options, ...prompt } as O ) };
+        if ( this.pipelineCursor === this.pipeline.length ) {
+          this.pipeline.push( command );
+        } else {
+          this.pipeline = [
+            ...this.pipeline.slice( 0, this.pipelineCursor + position ),
+            command,
+            ...this.pipeline.slice( this.pipelineCursor + position )
+          ];
+        }
+        position += 1;
       }
       resolve();
     } );
@@ -252,20 +327,20 @@ export class DSL<T extends Options, C extends any> {
    */
   sidebar( { name }: { name?: string; } ) {
     // create a new chat and have a sidebar conversation
-    const sidebar = new DSL<T, C>( {
+    const sidebar = new DSL<O, L>( {
       llm: this.llm,
       storage: this.storage,
       options: this.options,
-      name: name || `Sidebar - ${ this.chat.name }`,
       metadata: {
-        ...this.chat.metadata,
-        parent: this.chat.id!
+        ...this.data.metadata,
+        parent: this.data.id!
       }
     } );
-    this.chat.sidebars.push( sidebar.chat.id! );
-    sidebar.chat.user = this.chat.user;
+    this.data.sidebars.push( sidebar.data.id! );
+    sidebar.data.user = this.data.user;
     sidebar.functions = this.functions;
-    sidebar.context = this.context; // todo
+    sidebar.rules = this.rules;
+    sidebar.locals = this.locals;
     sidebar.type = "sidebar";
     return sidebar;
   }
@@ -276,27 +351,7 @@ export class DSL<T extends Options, C extends any> {
    */
   setUser( id: string ) {
     this.user = id;
-    if ( this.chat.user === undefined ) this.chat.user = this.user;
-    return this;
-  }
-
-  /**
-   * set the max number of tokens supported by the LLM
-   * 
-   * @param value: number
-   */
-  setMaxTokens( value: number ) {
-    this.maxTokens = value;
-    return this;
-  }
-
-  /**
-   * set the max call stack for commands that loop conditionally i.e. expect
-   * 
-   * @param value: number
-   */
-  setMaxCallStack( value: number ) {
-    this.maxCallStack = value;
+    if ( this.data.user === undefined ) this.data.user = this.user;
     return this;
   }
 
@@ -306,8 +361,8 @@ export class DSL<T extends Options, C extends any> {
    * @param value 
    * @returns 
    */
-  setContex( value: C ) {
-    this.context = value;
+  setLocals( locals: L ) {
+    this.locals = locals;
     return this;
   }
 
@@ -319,12 +374,11 @@ export class DSL<T extends Options, C extends any> {
    * @returns 
    */
   push( message: Omit<Message, "id" | "createdAt" | "updatedAt" | "tokens"> ) {
-    this.chat.messages.push( {
+    this.data.messages.push( {
       ...message,
       id: uuid(),
       createdAt: new Date(),
-      updatedAt: new Date(),
-      tokens: this.llm.tokens( message.content )
+      updatedAt: new Date()
     } );
     return this;
   }
@@ -338,8 +392,8 @@ export class DSL<T extends Options, C extends any> {
   load( id: string ) {
     const promise = () => new Promise<void>( ( resolve, reject ) => {
       this.storage.getById( id )
-        .then( chat => {
-          this.chat = chat;
+        .then( data => {
+          this.data = data;
           resolve();
         } )
         .catch( reject );
@@ -355,8 +409,8 @@ export class DSL<T extends Options, C extends any> {
    */
   clone() {
     const $this = cloneDeep( this );
-    $this.chat.id = uuid();
-    $this.chat.messages = $this.chat.messages.map( m => {
+    $this.data.id = uuid();
+    $this.data.messages = $this.data.messages.map( m => {
       const index = $this.rules.indexOf( m.id! );
       m.id = uuid();
       if ( index !== -1 ) {
@@ -373,16 +427,22 @@ export class DSL<T extends Options, C extends any> {
    * @param options 
    * @returns {object} - the chat object
    */
-  rule( options: ( Rule | CommandFunction<C, T, Rule> ) ) {
-    const { name, requirement, key }: Rule = typeof options === "function" ? options( this.context, this ) : options;
-    const content = `This conversation has the following rule: Rule ${ name } - requirement - ${ requirement }`;
+  rule( options: ( Rule | CommandFunction<L, O, Rule> ) ) {
+    const { name, requirement, key }: Rule = typeof options === "function" ? options( this.locals, this ) : options;
+    if ( this.rules.length === 0 ) {
+      this.push( {
+        content: "this conversation has rules - the assistant must follow them",
+        role: "user",
+        visibility: Visibility.REQUIRED
+      } );
+    }
+    const content = `Rule: ${ name } - ${ requirement }`;
     const ruleId = uuid();
-    this.chat.messages.push( {
+    this.data.messages.push( {
       id: ruleId,
       role: "user",
       key: key || `Rule - ${ name }`,
       content: content,
-      tokens: this.llm.tokens( content ),
       visibility: Visibility.REQUIRED,
       createdAt: new Date(),
       updatedAt: new Date()
@@ -397,9 +457,9 @@ export class DSL<T extends Options, C extends any> {
    * @param options 
    * @returns {object} - the chat object
    */
-  function<F>( options: Function & { func: ( args: F & { context?: C; chat: DSL<T, C>; } ) => Promise<Options | T>; } ) {
+  function<F>( options: Function & { func: ( args: F & { locals: L, chat: DSL<O, L>; } ) => Promise<Options | O>; } ) {
     const { name } = options;
-    this.functions[ name ] = options;
+    this.functions[ name ] = { ...options, calls: 0 };
     return this;
   }
 
@@ -409,12 +469,12 @@ export class DSL<T extends Options, C extends any> {
    * @param options 
    * @returns {object} - the chat object   
    */
-  prompt( options: ( Options | T | CommandFunction<C, T, Options | T> ) ) {
+  prompt( options: ( Options | O | CommandFunction<L, O, Options | O> ) ) {
     let promise: () => Promise<void> = () => new Promise<void>( ( resolve, reject ) => reject( "promise is undefined" ) );
     if ( typeof options === "function" ) {
-      promise = this._prompt( { ...this.options, ...options( this.context, this ) } as T );
+      promise = this._prompt( { ...this.options, ...options( this.locals, this ) } as O );
     } else {
-      promise = this._prompt( { ...this.options, ...options } as T );
+      promise = this._prompt( { ...this.options, ...options } as O );
     }
     this.pipeline.push( { command: "prompt", promise } );
     return this;
@@ -425,10 +485,10 @@ export class DSL<T extends Options, C extends any> {
    * @param func 
    * @returns {object} - the chat object   
    */
-  response( func: ( response: ChatMessage, context: C | undefined, chat: DSL<T, C> ) => Promise<void> ) {
+  response( func: ( args: { response: ChatMessage, locals: L, chat: DSL<O, L>; } ) => Promise<void> ) {
     const promise = () => {
       return new Promise<void>( ( resolve, reject ) => {
-        func( this.chat.messages[ this.chat.messages.length - 1 ], this.context, this )
+        func( { response: this.data.messages[ this.data.messages.length - 1 ], locals: this.locals, chat: this } )
           .then( resolve )
           .catch( reject );
       } );
@@ -448,19 +508,20 @@ export class DSL<T extends Options, C extends any> {
    * @param {function(response: ChatMessage): Promise<void>} func - A function to assess the LLM response.
    * @returns {object} - The chat object that can be used for further interactions.
    */
-  expect( func: ( response: ChatMessage, context: C | undefined, chat: DSL<T, C> ) => Promise<void> ) {
+  expect( func: ( args: { response: ChatMessage, locals: L, chat: DSL<O, L>; } ) => Promise<void> ) {
     const promise = () => {
       return new Promise<void>( async ( resolve, reject ) => {
         const expectationStack: string[] = [];
-        let targetMessage = this.chat.messages[ this.chat.messages.length - 1 ];
-        let sidebar: DSL<T, C> | null = null;
-        for await ( const i of Array( this.maxCallStack ).fill( null ).map( ( _v, i ) => i ) ) {
+        let response = this.data.messages[ this.data.messages.length - 1 ];
+        let sidebar: DSL<O, L> | null = null;
+        for await ( const i of Array( this.settings.maxCallStack ).fill( null ).map( ( _v, i ) => i ) ) {
           try {
-            await func( targetMessage, this.context, this );
+            await func( { response: response, locals: this.locals, chat: this } );
             if ( sidebar !== null ) {
               // a sidebar chat was used, replace the lastest main response with the targetMessage ( the latest response that passed the expectations )
-              this.chat.messages[ this.chat.messages.length - 1 ].visibility = Visibility.HIDDEN;
-              this.chat.messages.push( targetMessage );
+              // this is done by not remove the message but marking it as EXCLUDE
+              this.data.messages[ this.data.messages.length - 1 ].visibility = Visibility.EXCLUDE;
+              this.data.messages.push( response );
             }
             resolve();
             break;
@@ -473,21 +534,21 @@ export class DSL<T extends Options, C extends any> {
             if ( sidebar === null ) {
               sidebar = this.sidebar( { name: `Expectation - ${ expectation }` } );
               sidebar.rules = this.rules;
-              sidebar.chat.messages = [
+              sidebar.data.messages = [
                 // include the previous user and assitant message
-                ...this.chat.messages.filter( m => m.visibility === Visibility.REQUIRED ),
-                this.chat.messages[ this.chat.messages.length - 2 ],
-                this.chat.messages[ this.chat.messages.length - 1 ],
+                ...this.data.messages.filter( m => m.visibility === Visibility.REQUIRED ),
+                this.data.messages[ this.data.messages.length - 2 ],
+                this.data.messages[ this.data.messages.length - 1 ],
               ];
             }
 
             const _promise = () => {
               return new Promise<void>( ( _resolve, _reject ) => {
                 sidebar!
-                  .prompt( { message: `the prior response did not meet expectations; ${ expectation }.` } )
-                  .response( ( message ) => {
+                  .prompt( { message: `the prior response did not meet expectations: ${ expectation }.` } )
+                  .response( ( { response: message } ) => {
                     return new Promise<void>( ( __resolve ) => {
-                      targetMessage = message;
+                      response = message;
                       _resolve();
                     } );
                   } )
@@ -504,8 +565,8 @@ export class DSL<T extends Options, C extends any> {
             }
           };
         }
-        if ( expectationStack.length >= this.maxCallStack ) {
-          reject( `Expect Call Stack exceeded - ${ this.maxCallStack }. Refine your prompt and/or adjust your expectations` );
+        if ( expectationStack.length >= this.settings.maxCallStack ) {
+          reject( `Expect Call Stack exceeded - ${ this.settings.maxCallStack }. Refine your prompt and/or adjust your expectations` );
         }
       } );
     };
@@ -519,12 +580,13 @@ export class DSL<T extends Options, C extends any> {
    * @param func 
    * @returns {object} - the chat object   
    */
-  promptForEach( func: CommandFunction<C, T, ( Options | T )[]> ) {
+  promptForEach( func: CommandFunction<L, O, ( Options | O )[]> ) {
     const promise = () => {
       return new Promise<void>( ( resolve, reject ) => {
-        const promises = func( this.context, this ).map( p => {
-          return { command: "", promise: this._prompt( { ...this.options, ...p } as T ) };
-        } );
+        const promises = func( this.locals, this )
+          .map( p => {
+            return { command: "prompt", promise: this._prompt( { ...this.options, ...p } as O ) };
+          } );
         this.pipeline = [
           ...this.pipeline.slice( 0, this.pipelineCursor + 1 ),
           ...promises,
@@ -544,11 +606,11 @@ export class DSL<T extends Options, C extends any> {
    * @param func 
    * @returns {object} - the chat object   
    */
-  branchForEach( func: CommandFunction<C, T, ( Options | T )[]> ) {
+  branchForEach( func: CommandFunction<L, O, ( Options | O )[]> ) {
     const promise = () => {
       return new Promise<void>( ( resolve, reject ) => {
-        const promises = func( this.context, this ).map( p => {
-          return { command: "", promise: this._prompt( { ...this.options, ...p } as T ) };
+        const promises = func( this.locals, this ).map( p => {
+          return { command: "", promise: this._prompt( { ...this.options, ...p } as O ) };
         } );
         const joinIndex = this.pipeline.slice( this.pipelineCursor ).map( p => p.command ).indexOf( "join" );
         if ( joinIndex === -1 ) {
@@ -583,12 +645,12 @@ export class DSL<T extends Options, C extends any> {
    * @param func 
    * @returns {object} - this chat object
    */
-  input( func: () => Promise<Options | T> ) {
+  input( func: () => Promise<Options | O> ) {
     const promise = () => {
       const $this = this;
       return new Promise<void>( async ( resolve, reject ) => {
         const options = await func();
-        await $this._prompt( { ...this.options, ...options } as T )();
+        await $this._prompt( { ...this.options, ...options } as O )();
         resolve();
       } );
     };
@@ -631,7 +693,7 @@ export class DSL<T extends Options, C extends any> {
    * @returns {Promise}
    */
   save() {
-    return this.storage.save( this.chat );
+    return this.storage.save( this.data );
   }
 
   /**
@@ -640,11 +702,11 @@ export class DSL<T extends Options, C extends any> {
    * @returns {Promise}
    */
   async execute() {
-    return new Promise<DSL<T, C>>( async ( resolve, reject ) => {
+    return new Promise<DSL<O, L>>( async ( resolve, reject ) => {
       // todo validate the commands e.g. a branchForEach as a join
       try {
         let hasNext = true;
-        this.out( { type: this.type, chat: this.chat.id!, name: this.chat.name, state: "open" } );
+        this.out( { type: this.type, id: this.data.id!, state: "open" } );
         while ( hasNext ) {
           this.pipelineCursor += 1;
           const stage = this.pipeline[ this.pipelineCursor ];
@@ -653,21 +715,13 @@ export class DSL<T extends Options, C extends any> {
           this.out( { type: "command", content: `command: ${ command }\n` } );
           await promise();
         }
-        await this.storage.save( this.chat );
+        await this.storage.save( this.data );
         resolve( this );
       } catch ( error ) {
-        await this.storage.save( this.chat );
-        this.out( {
-          type: "message",
-          role: "assistant",
-          chat: this.chat.id!,
-          id: "",
-          content: String( error ),
-          visibility: Visibility.OPTIONAL
-        } );
+        await this.storage.save( this.data );
         reject( error );
       }
-      this.out( { type: this.type, chat: this.chat.id!, name: this.chat.name, state: "closed" } );
+      this.out( { type: this.type, id: this.data.id!, state: "closed" } );
     } );
   }
 }

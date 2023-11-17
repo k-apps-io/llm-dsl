@@ -19,5 +19,5 @@ describe( "'Hello, World!'", () => {
       } )
       .execute();
     expect( true ).toBe( true );
-  }, 20000 );
+  }, 60000 );
 } );

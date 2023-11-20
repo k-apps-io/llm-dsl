@@ -1,3 +1,4 @@
+import JSON from "json5";
 import { cloneDeep } from "lodash";
 import { v4 as uuid } from "uuid";
 import { Chat, Message as ChatMessage, Message, Visibility } from "./Chat";
@@ -140,6 +141,7 @@ export class DSL<O extends Options, L extends { [ key: string ]: unknown; }> {
     );
   } = {};
   private pipeline: Array<{
+    id: string;
     command: string;
     promise: ( $this: DSL<O, L> ) => Promise<void>;
   }> = [];
@@ -176,7 +178,7 @@ export class DSL<O extends Options, L extends { [ key: string ]: unknown; }> {
   private _prompt( $chat: DSL<O, L>, options: O ) {
     return () => new Promise<void>( async ( resolve, reject ) => {
       const messageTokens = $chat.llm.tokens( options.message );
-      const responseSize = ( options.responseSize || Math.floor( this.settings.minReponseSize ) );
+      const responseSize = ( options.responseSize || $chat.settings.minReponseSize );
       const limit = $chat.settings.contextWindowSize - responseSize;
 
       // prepare the messages
@@ -194,8 +196,10 @@ export class DSL<O extends Options, L extends { [ key: string ]: unknown; }> {
           return prev;
         }, [] as Chat[ "messages" ] )
         .map( m => {
-          // const size = this.size;
-          const size = $chat.llm.tokens( m.content );
+          let size: number = m.content.match( /\W/g )?.length || 0;
+          try {
+            size = $chat.llm.tokens( m.content );
+          } catch ( error ) { /** ignore */ }
           return { ...m, size: size };
         } )
         ;
@@ -225,8 +229,8 @@ export class DSL<O extends Options, L extends { [ key: string ]: unknown; }> {
       const visibility = options.visibility !== undefined ? options.visibility : Visibility.OPTIONAL;
       const message: Message = {
         id: messageId,
-        role: "user",
-        content: options.message,
+        role: options.role || $chat.options.role || "user",
+        content: options.message.replaceAll( /\n\s+(\w)/gmi, '\n$1' ).trim(),
         visibility: visibility,
         createdAt: new Date(),
         updatedAt: new Date(),
@@ -234,33 +238,24 @@ export class DSL<O extends Options, L extends { [ key: string ]: unknown; }> {
         user: $chat.user
       };
       $chat.data.messages.push( message );
-      $chat.out( { ...message, chat: this.data.id!, type: "message", state: "streaming" } ); // todo stream to final
-      $chat.out( { ...message, chat: this.data.id!, type: "message", state: "final" } ); // todo stream to final
+      $chat.out( { ...message, chat: $chat.data.id!, type: "message", state: "streaming" } ); // todo stream to final
+      $chat.out( { ...message, chat: $chat.data.id!, type: "message", state: "final" } ); // todo stream to final
       const stream = $chat.llm.stream( {
         messages: [ ...messages.map( m => ( { prompt: m.content, role: m.role } ) ), { prompt: options.message, role: "user" } ],
         functions: functions,
-        user: this.user,
+        user: $chat.user,
         responseSize: responseSize,
         ...options
       } );
+      let buffer = true;
+      let isFunction = false;
       let response = "";
       const funcs: Array<Function & { args: string; func: ( args: any ) => Promise<Options | O>; }> = [];
       const responseId = uuid();
       try {
         await ( async () => {
           for await ( const chunk of stream ) {
-            if ( chunk.type === "text" ) {
-              response += chunk.content;
-              $chat.out( {
-                id: responseId,
-                type: "message",
-                state: "streaming",
-                role: "assistant",
-                content: chunk.content,
-                chat: this.data.id!,
-                visibility: Visibility.OPTIONAL
-              } );
-            } else {
+            if ( chunk.type === "function" ) {
               const func = $chat.functions[ chunk.name! ];
               if ( func !== undefined ) funcs.push( { ...func, args: chunk.arguments } );
               const content = `call: ${ chunk.name }(${ chunk.arguments })`;
@@ -282,11 +277,60 @@ export class DSL<O extends Options, L extends { [ key: string ]: unknown; }> {
                 id: functionUuid,
                 visibility: Visibility.SYSTEM
               } );
+            } else if ( buffer ) {
+              response += chunk.content;
+              if ( response.length >= 5 ) {
+                if ( response.startsWith( "call:" ) ) {
+                  isFunction = true;
+                } else {
+                  $chat.out( {
+                    id: responseId,
+                    type: "message",
+                    state: "streaming",
+                    role: "assistant",
+                    content: response,
+                    chat: $chat.data.id!,
+                    visibility: Visibility.OPTIONAL
+                  } );
+                }
+                buffer = false;
+              }
+            } else if ( isFunction ) {
+              response += chunk.content;
+              const match = response.match( /call:\s(\w+?)\((.+?)\)/gi );
+              if ( match ) {
+                const name = match[ 1 ];
+                const args = match[ 2 ];
+                const func = $chat.functions[ name ];
+                if ( func !== undefined ) funcs.push( { ...func, args: args } );
+                isFunction = false;
+                buffer = true;
+                const functionUuid = uuid();
+                $chat.data.messages.push( {
+                  id: functionUuid,
+                  role: "assistant",
+                  content: response,
+                  visibility: Visibility.SYSTEM,
+                  createdAt: new Date(),
+                  updatedAt: new Date()
+                } );
+                response = "";
+              }
+            } else {
+              response += chunk.content;
+              $chat.out( {
+                id: responseId,
+                type: "message",
+                state: "streaming",
+                role: "assistant",
+                content: chunk.content,
+                chat: $chat.data.id!,
+                visibility: Visibility.OPTIONAL
+              } );
             }
           }
         } )();
       } catch ( error ) {
-        console.log( requiredTokens, messageTokens, functionTokens, responseSize, totalTokens );
         reject( error );
         return;
       }
@@ -322,17 +366,23 @@ export class DSL<O extends Options, L extends { [ key: string ]: unknown; }> {
         }
         $chat.functions[ name ].calls += 1;
         // todo error handling for args
-        const params = args !== "" ? JSON.parse( args! ) : {};
+        let params: { [ key: string ]: unknown; } = {};
+        try {
+          params = args !== "" ? JSON.parse( args! ) : {};
+        } catch ( error ) {
+          // todo log
+        }
         const prompt = await promise( { ...params, locals: $chat.locals, chat: $chat } );
-        prompt.message = `${ name }(${ JSON.stringify( params ) }) => ${ prompt.message }`;
-        const command = { command: name, promise: $chat._prompt( $chat, { ...$chat.options, ...prompt } as O ) };
+        prompt.message = `here is the result of your call ${ name }(): ${ prompt.message.replaceAll( /\n\s+(\w)/gmi, '\n$1' ).trim() }`;
+        prompt.role = "system";
+        const command = { id: uuid(), command: name, promise: $chat._prompt( $chat, { ...$chat.options, ...prompt } as O ) };
         if ( $chat.pipelineCursor === $chat.pipeline.length ) {
           $chat.pipeline.push( command );
         } else {
           $chat.pipeline = [
-            ...$chat.pipeline.slice( 0, this.pipelineCursor + position ),
+            ...$chat.pipeline.slice( 0, $chat.pipelineCursor + position ),
             command,
-            ...$chat.pipeline.slice( this.pipelineCursor + position )
+            ...$chat.pipeline.slice( $chat.pipelineCursor + position )
           ];
         }
         position += 1;
@@ -366,6 +416,7 @@ export class DSL<O extends Options, L extends { [ key: string ]: unknown; }> {
     sidebar.rules = this.rules;
     sidebar.locals = this.locals;
     sidebar.type = "sidebar";
+    sidebar.settings = this.settings;
     return sidebar;
   }
 
@@ -422,7 +473,7 @@ export class DSL<O extends Options, L extends { [ key: string ]: unknown; }> {
         } )
         .catch( reject );
     } );
-    this.pipeline.push( { command: "load", promise } );
+    this.pipeline.push( { id: uuid(), command: "load", promise } );
     return this;
   }
 
@@ -462,7 +513,7 @@ export class DSL<O extends Options, L extends { [ key: string ]: unknown; }> {
         if ( index === -1 || $this.data.messages[ index ].content !== content ) {
           $this.data.messages.push( {
             id: ruleId,
-            role: "user",
+            role: "system",
             key: _key,
             content: content,
             visibility: Visibility.REQUIRED,
@@ -474,7 +525,7 @@ export class DSL<O extends Options, L extends { [ key: string ]: unknown; }> {
         resolve();
       } );
     };
-    this.pipeline.push( { command: "rule", promise } );
+    this.pipeline.push( { id: uuid(), command: "rule", promise } );
     return this;
   }
 
@@ -505,7 +556,7 @@ export class DSL<O extends Options, L extends { [ key: string ]: unknown; }> {
           .catch( reject );
       } );
     };
-    this.pipeline.push( { command: "prompt", promise } );
+    this.pipeline.push( { id: uuid(), command: "prompt", promise } );
     return this;
   }
   /**
@@ -522,7 +573,7 @@ export class DSL<O extends Options, L extends { [ key: string ]: unknown; }> {
           .catch( reject );
       } );
     };
-    this.pipeline.push( { command: "response", promise } );
+    this.pipeline.push( { id: uuid(), command: "response", promise } );
     return this;
   }
 
@@ -538,70 +589,41 @@ export class DSL<O extends Options, L extends { [ key: string ]: unknown; }> {
    * @returns {object} - The chat object that can be used for further interactions.
    */
   expect( func: ( args: { response: ChatMessage, locals: L, chat: DSL<O, L>; } ) => Promise<void> ) {
+    const stageId = uuid();
     const promise = ( $this: DSL<O, L> ) => {
       return new Promise<void>( async ( resolve, reject ) => {
-        const expectationStack: string[] = [];
-        let response = $this.data.messages[ $this.data.messages.length - 1 ];
-        let sidebar: DSL<O, L> | null = null;
-        for await ( const i of Array( $this.settings.maxCallStack ).fill( null ).map( ( _v, i ) => i ) ) {
-          try {
-            await func( { response: response, locals: $this.locals, chat: $this } );
-            if ( sidebar !== null ) {
-              // a sidebar chat was used, replace the lastest main response with the targetMessage ( the latest response that passed the expectations )
-              // this is done by not remove the message but marking it as EXCLUDE
-              $this.data.messages[ $this.data.messages.length - 1 ].visibility = Visibility.EXCLUDE;
-              $this.data.messages.push( response );
-              await sidebar.save();
-            }
-            resolve();
-            break;
-          } catch ( expectation ) {
+        const response = $this.data.messages[ $this.data.messages.length - 1 ];
+        func( { response: response, locals: $this.locals, chat: $this } )
+          .then( () => resolve() )
+          .catch( expectation => {
             if ( typeof expectation !== "string" ) {
               reject( expectation );
-              break;
+              return;
             }
-
-            expectationStack.push( expectation );
-            if ( sidebar === null ) {
-              sidebar = $this.sidebar();
-              sidebar.rules = $this.rules;
-              sidebar.data.messages = [
-                // include the previous user and assitant message
-                ...$this.data.messages.filter( m => m.visibility === Visibility.REQUIRED ),
-                $this.data.messages[ $this.data.messages.length - 2 ],
-                $this.data.messages[ $this.data.messages.length - 1 ],
-              ];
-            }
-
-            const _promise = () => {
-              return new Promise<void>( ( _resolve, _reject ) => {
-                sidebar!
-                  .prompt( { message: `the prior response did not meet expectations: ${ expectation }.` } )
-                  .response( ( { response: message } ) => {
-                    return new Promise<void>( ( __resolve ) => {
-                      response = message;
-                      _resolve();
-                    } );
-                  } )
-                  .stream( $this.out )
-                  .then( () => _resolve() )
-                  .catch( _reject );
-              } );
-            };
-            try {
-              await _promise();
-            } catch ( error ) {
-              reject( error );
-              break;
-            }
-          };
-        }
-        if ( expectationStack.length >= $this.settings.maxCallStack ) {
-          reject( `Expect Call Stack exceeded - ${ $this.settings.maxCallStack }. Refine your prompt and/or adjust your expectations` );
-        }
+            // an expecatation was thrown
+            // push an dispute prompt as the next stage
+            // followed by this expect promise again so it can be re-evaluated
+            $this.pipeline = [
+              ...$this.pipeline.slice( 0, $this.pipelineCursor + 1 ),
+              {
+                id: stageId,
+                command: `dispute`,
+                promise: $this._prompt( $this, {
+                  ...$this.options,
+                  role: "system",
+                  visibility: Visibility.SYSTEM,
+                  message: `the prior response did not meet expectations: ${ expectation }`,
+                  // responseSize: $this.llm.tokens( response.content ) * 1.25
+                } as O
+                )
+              },
+              ...$this.pipeline.slice( $this.pipelineCursor )
+            ];
+            resolve();
+          } );
       } );
     };
-    this.pipeline.push( { command: "expect", promise } );
+    this.pipeline.push( { id: stageId, command: "expect", promise } );
     return this;
   }
 
@@ -616,7 +638,7 @@ export class DSL<O extends Options, L extends { [ key: string ]: unknown; }> {
       return new Promise<void>( ( resolve, reject ) => {
         const promises = func( $this.locals, $this )
           .map( p => {
-            return { command: "prompt", promise: $this._prompt( $this, { ...$this.options, ...p } as O ) };
+            return { id: uuid(), command: "prompt", promise: $this._prompt( $this, { ...$this.options, ...p } as O ) };
           } );
         $this.pipeline = [
           ...$this.pipeline.slice( 0, $this.pipelineCursor + 1 ),
@@ -626,7 +648,7 @@ export class DSL<O extends Options, L extends { [ key: string ]: unknown; }> {
         resolve();
       } );
     };
-    this.pipeline.push( { command: "promptForEach", promise } );
+    this.pipeline.push( { id: uuid(), command: "promptForEach", promise } );
     return this;
   }
 
@@ -641,7 +663,7 @@ export class DSL<O extends Options, L extends { [ key: string ]: unknown; }> {
     const promise = ( $this: DSL<O, L> ) => {
       return new Promise<void>( ( resolve, reject ) => {
         const promises = func( $this.locals, $this ).map( p => {
-          return { command: "", promise: $this._prompt( $this, { ...$this.options, ...p } as O ) };
+          return { id: uuid(), command: "prompt", promise: $this._prompt( $this, { ...$this.options, ...p } as O ) };
         } );
         const joinIndex = $this.pipeline.slice( $this.pipelineCursor ).map( p => p.command ).indexOf( "join" );
         if ( joinIndex === -1 ) {
@@ -656,7 +678,7 @@ export class DSL<O extends Options, L extends { [ key: string ]: unknown; }> {
         resolve();
       } );
     };
-    this.pipeline.push( { command: "promptForEach", promise } );
+    this.pipeline.push( { id: uuid(), command: "branchForEach", promise } );
     return this;
   }
 
@@ -666,7 +688,7 @@ export class DSL<O extends Options, L extends { [ key: string ]: unknown; }> {
    */
   join() {
     // see forEachBranch
-    this.pipeline.push( { command: "join", promise: ( $this: DSL<O, L> ) => new Promise<void>( ( resolve ) => resolve() ) } );
+    this.pipeline.push( { id: uuid(), command: "join", promise: ( $this: DSL<O, L> ) => new Promise<void>( ( resolve ) => resolve() ) } );
     return this;
   }
 
@@ -684,7 +706,7 @@ export class DSL<O extends Options, L extends { [ key: string ]: unknown; }> {
         resolve();
       } );
     };
-    this.pipeline.push( { command: "input", promise } );
+    this.pipeline.push( { id: uuid(), command: "input", promise } );
     return this;
   }
 
@@ -741,9 +763,17 @@ export class DSL<O extends Options, L extends { [ key: string ]: unknown; }> {
           this.pipelineCursor += 1;
           const stage = this.pipeline[ this.pipelineCursor ];
           if ( stage === undefined ) break;
-          const { promise, command } = stage;
+          const { promise, command, id } = stage;
+          const loopCount = this.pipeline
+            .slice( 0, this.pipelineCursor )
+            .filter( stage => stage.id === id && stage.command === command ).length;
+          if ( loopCount >= this.settings.maxCallStack ) {
+            reject( `Max Call Stack Exceeded - Stage ${ command }: ${ id } - chat: ${ this.data.id } - pipeline: ${ this.pipeline.map( ( { id, command } ) => ( { id, command } ) ) }` );
+            break;
+          }
           this.out( { type: "command", content: `command: ${ command }\n` } );
           await promise( this );
+          await this.storage.save( this.data ); // todo setting to save after each command or just at the end
         }
         await this.storage.save( this.data );
         resolve( this );

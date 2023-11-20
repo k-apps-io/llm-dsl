@@ -38,8 +38,8 @@ export interface Message {
    */
   id?: string;
 
-  /**
-   * The role authoring the message.
+  /** 
+      * The role authoring the message.
    * @type {"user" | "assistant"}
    */
   role: "user" | "assistant" | "system";

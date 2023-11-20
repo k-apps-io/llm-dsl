@@ -18,10 +18,9 @@ const chat = new DSL<Options, { wasCalled: boolean; }>( {
 } );
 describe( ".function", () => {
   it( 'expectFunctionCall', async () => {
-    const $chat = chat.clone();
     const fileStream = createWriteStream( `./__tests__/expectFunctionCall.log` );
-    fileStream.write( `// ../chats/${ $chat.data.id }.json\n\n` );
-    await $chat
+    const $chat = await chat
+      .clone()
       .function<{ unit?: "Fahrenheit" | "Celsius"; }>( {
         name: "getTheCurrentWeather",
         parameters: {
@@ -66,7 +65,9 @@ describe( ".function", () => {
         } );
       } )
       .stream( chunk => {
-        if ( ( chunk.type === "message" && chunk.state === "streaming" ) || chunk.type == "command" ) fileStream.write( chunk.content );
+        if ( chunk.type === "chat" ) fileStream.write( `// chat: ${ chunk.id } - ${ chunk.state }` );
+        if ( chunk.type === "command" ) fileStream.write( `\n${ chunk.content }\n` );
+        if ( ( chunk.type === "message" && chunk.state === "streaming" ) ) fileStream.write( chunk.content );
       } );
     expect( $chat.locals.wasCalled ).toBeTruthy();
     fileStream.end();

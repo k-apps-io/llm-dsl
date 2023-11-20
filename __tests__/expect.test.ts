@@ -13,15 +13,20 @@ describe( ".expect", () => {
       options: {
         model: "gpt-3.5-turbo"
       },
-      metadata: {}
+      metadata: {},
+      locals: {
+        attempts: 0
+      }
     } );
     const fileStream = createWriteStream( `./__tests__/expectJSON.log` );
     await chat
       .rule( CODE_BLOCK_RULE )
       .prompt( {
-        message: "generate a JSON Array of 2 city names"
+        message: `
+          generate a JSON Array of 2 city names
+        `
       } )
-      .expect( ( { response } ) => new Promise<void>( ( resolve, reject ) => {
+      .expect( ( { response, locals } ) => new Promise<void>( ( resolve, reject ) => {
         const blocks = response.codeBlocks || [];
         if ( blocks.length === 0 ) {
           reject( "a json code block was expected" );
@@ -34,7 +39,12 @@ describe( ".expect", () => {
           } else {
             try {
               const data = JSON.parse( block.code );
-              resolve();
+              locals.attempts += 1;
+              if ( locals.attempts <= 1 ) {
+                reject( "I need 3 more cities" );
+              } else {
+                resolve();
+              }
             } catch ( error ) {
               reject( `\`JSON.parse\` threw the exception ${ error }` );
             }
@@ -42,7 +52,9 @@ describe( ".expect", () => {
         }
       } ) )
       .stream( chunk => {
-        if ( ( chunk.type === "message" && chunk.state === "streaming" ) || chunk.type == "command" ) fileStream.write( chunk.content );
+        if ( chunk.type === "chat" ) fileStream.write( `// chat: ${ chunk.id } - ${ chunk.state }` );
+        if ( chunk.type === "command" ) fileStream.write( `\n${ chunk.content }\n` );
+        if ( ( chunk.type === "message" && chunk.state === "streaming" ) ) fileStream.write( chunk.content );
       } );
     expect( true ).toBe( true );
     fileStream.end();
@@ -59,7 +71,7 @@ describe( ".expect", () => {
         },
         metadata: {},
         settings: {
-          maxCallStack: 2
+          maxCallStack: 6
         }
       } );
       fileStream = createWriteStream( `./__tests__/expectCallstackExceeded.log` );
@@ -72,14 +84,19 @@ describe( ".expect", () => {
           reject( "I need different cities" );
         } ) )
         .stream( chunk => {
-          if ( ( chunk.type === "message" && chunk.state === "streaming" ) || chunk.type == "command" ) fileStream.write( chunk.content );
+          if ( chunk.type === "chat" ) fileStream.write( `// chat: ${ chunk.id } - ${ chunk.state }` );
+          if ( chunk.type === "command" ) fileStream.write( `\n${ chunk.content }\n` );
+          if ( ( chunk.type === "message" && chunk.state === "streaming" ) ) fileStream.write( chunk.content );
         } );
       // it shouldn't succeed
       fileStream.end();
       expect( false ).toBe( true );
     } catch ( error ) {
+      const e = String( error );
+      fileStream.write( "\n" );
+      fileStream.write( e );
       fileStream.end();
-      expect( true ).toBe( true );
+      expect( e ).toContain( "Max Call Stack Exceeded" );
     }
   }, 200000 );
 } );

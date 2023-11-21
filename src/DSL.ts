@@ -234,7 +234,7 @@ export class DSL<O extends Options, L extends { [ key: string ]: unknown; }> {
         visibility: visibility,
         createdAt: new Date(),
         updatedAt: new Date(),
-        included: messages.map( m => m.id! ),
+        included: messages.map( m => ( { id: m.id!, size: $chat.llm.tokens( m.content ) } ) ),
         user: $chat.user
       };
       $chat.data.messages.push( message );
@@ -414,9 +414,10 @@ export class DSL<O extends Options, L extends { [ key: string ]: unknown; }> {
     sidebar.data.user = this.data.user;
     sidebar.functions = this.functions;
     sidebar.rules = this.rules;
-    sidebar.locals = this.locals;
+    sidebar.locals = { ...this.locals };
     sidebar.type = "sidebar";
-    sidebar.settings = this.settings;
+    sidebar.settings = { ...this.settings };
+    // todo apply the messages onto the sidebar
     return sidebar;
   }
 
@@ -613,7 +614,7 @@ export class DSL<O extends Options, L extends { [ key: string ]: unknown; }> {
                   role: "system",
                   visibility: Visibility.SYSTEM,
                   message: `the prior response did not meet expectations: ${ expectation }`,
-                  // responseSize: $this.llm.tokens( response.content ) * 1.25
+                  responseSize: $this.llm.tokens( response.content ) * 1.25 // todo need to replay the prior responses options
                 } as O
                 )
               },

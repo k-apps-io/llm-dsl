@@ -90,7 +90,7 @@ export interface Message {
    * A list of messages that were included in a prompt (optional).
    * @type {string[]}
    */
-  included?: string[];
+  included?: { id: string, size: number; }[];
 }
 
 /**

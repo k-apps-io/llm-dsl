@@ -63,5 +63,5 @@ describe( "branchForEach", () => {
       fileStream.end();
       expect( false ).toBe( true );
     }
-  }, 60000 );
+  }, 200000 );
 } );

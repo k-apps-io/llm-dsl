@@ -131,7 +131,6 @@ export class DSL<O extends Options, L extends { [ key: string ]: unknown; }> {
     minReponseSize: number;
     maxCallStack: number;
   };
-  _lastPromptOptions?: Options = undefined;
 
   private functions: {
     [ key: string ]: (
@@ -242,7 +241,6 @@ export class DSL<O extends Options, L extends { [ key: string ]: unknown; }> {
       $chat.out( { ...message, chat: $chat.data.id!, type: "message", state: "streaming" } ); // todo stream to final
       $chat.out( { ...message, chat: $chat.data.id!, type: "message", state: "final" } ); // todo stream to final
       const _options = { ...$chat.options, ...options, responseSize, visibility };
-      $chat._lastPromptOptions = _options;
       const stream = $chat.llm.stream( {
         messages: [ ...messages.map( m => ( { prompt: m.content, role: m.role } ) ), { prompt: options.message, role: "user" } ],
         functions: functions,
@@ -612,10 +610,11 @@ export class DSL<O extends Options, L extends { [ key: string ]: unknown; }> {
                 id: stageId,
                 command: `dispute`,
                 promise: $this._prompt( $this, {
-                  ...$this._lastPromptOptions,
+                  ...$this.options,
                   role: "system",
                   visibility: Visibility.SYSTEM,
                   message: `the prior response did not meet expectations: ${ expectation }`,
+                  responseSize: Math.floor( $this.settings.contextWindowSize * 0.25 )
                 } as O
                 )
               },

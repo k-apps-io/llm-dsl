@@ -131,6 +131,7 @@ export class DSL<O extends Options, L extends { [ key: string ]: unknown; }> {
     minReponseSize: number;
     maxCallStack: number;
   };
+  _lastPromptOptions?: Options = undefined;
 
   private functions: {
     [ key: string ]: (
@@ -240,12 +241,13 @@ export class DSL<O extends Options, L extends { [ key: string ]: unknown; }> {
       $chat.data.messages.push( message );
       $chat.out( { ...message, chat: $chat.data.id!, type: "message", state: "streaming" } ); // todo stream to final
       $chat.out( { ...message, chat: $chat.data.id!, type: "message", state: "final" } ); // todo stream to final
+      const _options = { ...$chat.options, ...options, responseSize, visibility };
+      $chat._lastPromptOptions = _options;
       const stream = $chat.llm.stream( {
         messages: [ ...messages.map( m => ( { prompt: m.content, role: m.role } ) ), { prompt: options.message, role: "user" } ],
         functions: functions,
         user: $chat.user,
-        responseSize: responseSize,
-        ...options
+        ..._options
       } );
       let buffer = true;
       let isFunction = false;
@@ -610,11 +612,10 @@ export class DSL<O extends Options, L extends { [ key: string ]: unknown; }> {
                 id: stageId,
                 command: `dispute`,
                 promise: $this._prompt( $this, {
-                  ...$this.options,
+                  ...$this._lastPromptOptions,
                   role: "system",
                   visibility: Visibility.SYSTEM,
                   message: `the prior response did not meet expectations: ${ expectation }`,
-                  responseSize: $this.llm.tokens( response.content ) * 1.25 // todo need to replay the prior responses options
                 } as O
                 )
               },

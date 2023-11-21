@@ -764,16 +764,20 @@ export class DSL<O extends Options, L extends { [ key: string ]: unknown; }> {
           const stage = this.pipeline[ this.pipelineCursor ];
           if ( stage === undefined ) break;
           const { promise, command, id } = stage;
-          const loopCount = this.pipeline
-            .slice( 0, this.pipelineCursor )
-            .filter( stage => stage.id === id && stage.command === command ).length;
-          if ( loopCount >= this.settings.maxCallStack ) {
-            reject( `Max Call Stack Exceeded - Stage ${ command }: ${ id } - chat: ${ this.data.id } - pipeline: ${ this.pipeline.map( ( { id, command } ) => ( { id, command } ) ) }` );
+          const slice = this.pipeline.slice( 0, this.pipelineCursor );
+          let stackCount = 0;
+          for ( var i = slice.length - 1; i >= 0; i-- ) {
+            const { id: _id } = slice[ i ];
+            if ( id !== _id ) break;
+            stackCount += 1;
+          }
+          if ( stackCount >= this.settings.maxCallStack ) {
+            reject( `Max Call Stack Exceeded - Stage ${ command }: ${ id } - chat: ${ this.data.id } - pipeline: ${ this.pipeline.map( ( { id, command } ) => ( `${ command } ( ${ id } )` ) ).join( ", " ) }` );
             break;
           }
           this.out( { type: "command", content: `command: ${ command }\n` } );
           await promise( this );
-          await this.storage.save( this.data ); // todo setting to save after each command or just at the end
+          // await this.storage.save( this.data ); // todo setting to save after each command or just at the end
         }
         await this.storage.save( this.data );
         resolve( this );

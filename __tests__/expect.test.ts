@@ -71,7 +71,7 @@ describe( ".expect", () => {
         },
         metadata: {},
         settings: {
-          maxCallStack: 6
+          maxCallStack: 3
         }
       } );
       fileStream = createWriteStream( `./__tests__/expectCallstackExceeded.log` );

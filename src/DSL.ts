@@ -238,8 +238,8 @@ export class DSL<O extends Options, L extends { [ key: string ]: unknown; }> {
         user: $chat.user
       };
       $chat.data.messages.push( message );
-      $chat.out( { ...message, chat: $chat.data.id!, type: "message", state: "streaming" } ); // todo stream to final
-      $chat.out( { ...message, chat: $chat.data.id!, type: "message", state: "final" } ); // todo stream to final
+      $chat.out( { ...message, chat: $chat.data.id!, type: "message", state: "streaming" } );
+      $chat.out( { ...message, chat: $chat.data.id!, type: "message", state: "final" } );
       const _options = { ...$chat.options, ...options, responseSize, visibility };
       const stream = $chat.llm.stream( {
         messages: [ ...messages.map( m => ( { prompt: m.content, role: m.role } ) ), { prompt: options.message, role: "user" } ],
@@ -443,19 +443,24 @@ export class DSL<O extends Options, L extends { [ key: string ]: unknown; }> {
   }
 
   /**
-   * add a message to the end of the chat without generating a prompt. This action occurrs
-   * immediately; outside of the chain of commands
+   * add a message to the end of the chat without generating a prompt.
    * 
    * @param message - a custom message to add to the chat
    * @returns 
    */
   push( message: Omit<Message, "id" | "createdAt" | "updatedAt" | "tokens"> ) {
-    this.data.messages.push( {
-      ...message,
-      id: uuid(),
-      createdAt: new Date(),
-      updatedAt: new Date()
+    const promise = ( $this: DSL<O, L> ) => new Promise<void>( ( resolve, reject ) => {
+      $this.data.messages.push( {
+        ...message,
+        id: uuid(),
+        createdAt: new Date(),
+        updatedAt: new Date()
+      } );
+      $this.out( { ...message, chat: $this.data.id!, type: "message", state: "streaming" } );
+      $this.out( { ...message, chat: $this.data.id!, type: "message", state: "final" } );
+      resolve();
     } );
+    this.pipeline.push( { id: uuid(), command: "push", promise } );
     return this;
   }
 

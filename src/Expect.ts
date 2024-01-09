@@ -3,7 +3,7 @@
 import JSON from "json5";
 import { Message } from "./Chat";
 import { DSL, Locals, Options } from "./DSL";
-type Expect<O extends Options, L extends Locals> = (
+export type Expect<O extends Options, L extends Locals> = (
   args: { response: Message, locals: L, chat: DSL<O, L>; }
 ) => Promise<{ response: Message, locals: L, chat: DSL<O, L>; blocks: { [ key: string ]: unknown; }[]; }>;
 

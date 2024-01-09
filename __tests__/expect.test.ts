@@ -1,6 +1,7 @@
 import { ChatGPT, Options } from "@k-apps.io/llm-dsl-chatgpt";
 import { createWriteStream } from "fs";
 import { DSL } from "../src/DSL";
+import { json } from "../src/Expect";
 import { CODE_BLOCK_RULE } from "../src/Rules";
 import { LocalStorage } from "../src/Storage";
 
@@ -26,30 +27,17 @@ describe( ".expect", () => {
           generate a JSON Array of 2 city names
         `
       } )
-      .expect( ( { response, locals } ) => new Promise<void>( ( resolve, reject ) => {
-        const blocks = response.codeBlocks || [];
-        if ( blocks.length === 0 ) {
-          reject( "a json code block was expected" );
-        } else if ( blocks.length > 1 ) {
-          reject( "only 1 code block was expected" );
-        } else {
-          const block = blocks[ 0 ];
-          if ( block.lang !== "json" ) {
-            reject( "a json code block was requested" );
-          } else {
-            try {
-              const data = JSON.parse( block.code );
+      .expect( args => new Promise<void>( ( resolve, reject ) => {
+        json( args )
+          .then( ( { locals, blocks } ) => {
+            if ( locals.attempts <= 1 ) {
               locals.attempts += 1;
-              if ( locals.attempts <= 1 ) {
-                reject( "I need 3 more cities" );
-              } else {
-                resolve();
-              }
-            } catch ( error ) {
-              reject( `\`JSON.parse\` threw the exception ${ error }` );
+              reject( "I need 3 more cities" );
+            } else {
+              resolve();
             }
-          }
-        }
+          } )
+          .catch( reject );
       } ) )
       .stream( chunk => {
         if ( chunk.type === "chat" ) fileStream.write( `// chat: ${ chunk.id } - ${ chunk.state }` );

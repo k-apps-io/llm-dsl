@@ -54,6 +54,10 @@ export interface Options {
   role?: Prompt[ "role" ];
 }
 
+export interface Locals {
+  [ key: string ]: unknown;
+}
+
 export interface Settings {
   contextWindowSize?: number;
   minReponseSize?: number;
@@ -93,7 +97,7 @@ export interface CommandChunk {
   content: string | Uint8Array;
 }
 
-export type CommandFunction<L extends { [ key: string ]: unknown; }, O extends Options, F> = ( locals: L, chat: DSL<O, L> ) => F;
+export type CommandFunction<L extends Locals, O extends Options, F> = ( locals: L, chat: DSL<O, L> ) => F;
 
 export abstract class LLM {
 
@@ -116,7 +120,7 @@ export abstract class LLM {
   abstract stream( config: Stream ): AsyncIterable<TextResponse | FunctionResponse>;
 }
 
-export class DSL<O extends Options, L extends { [ key: string ]: unknown; }> {
+export class DSL<O extends Options, L extends Locals> {
 
   llm: LLM;
   storage: ChatStorage;
@@ -426,8 +430,12 @@ export class DSL<O extends Options, L extends { [ key: string ]: unknown; }> {
    * @param id: a user id to associate with the chat and new prompts
    */
   setUser( id: string ) {
-    this.user = id;
-    if ( this.data.user === undefined ) this.data.user = this.user;
+    const promise = ( $this: DSL<O, L> ) => new Promise<void>( ( resolve, reject ) => {
+      $this.user = id;
+      if ( $this.data.user === undefined ) $this.data.user = $this.user;
+      resolve();
+    } );
+    this.pipeline.push( { id: uuid(), command: "setting user", promise } );
     return this;
   }
 
@@ -438,7 +446,11 @@ export class DSL<O extends Options, L extends { [ key: string ]: unknown; }> {
    * @returns 
    */
   setLocals( locals: L ) {
-    this.locals = locals;
+    const promise = ( $this: DSL<O, L> ) => new Promise<void>( ( resolve, reject ) => {
+      $this.locals = locals;
+      resolve();
+    } );
+    this.pipeline.push( { id: uuid(), command: "setting locals", promise } );
     return this;
   }
 

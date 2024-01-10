@@ -455,6 +455,7 @@ export class DSL<O extends Options, L extends Locals> {
   }
 
   /**
+   * todo
    * add a message to the end of the chat without generating a prompt.
    * 
    * @param message - a custom message to add to the chat

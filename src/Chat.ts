@@ -2,6 +2,7 @@
  * An enum representing the different visibility statuses a message can hold.
  * @enum {number}
  */
+// todo rename to Awareness?
 export enum Visibility {
   SYSTEM, // same as optional however the message is tagged as a system message
   OPTIONAL, // may be included in the context window given the size and position

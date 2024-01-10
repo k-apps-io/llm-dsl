@@ -460,14 +460,22 @@ export class DSL<O extends Options, L extends Locals> {
    * @param message - a custom message to add to the chat
    * @returns 
    */
-  push( message: Omit<Message, "id" | "createdAt" | "updatedAt" | "tokens"> ) {
+  push( options: ( Options | O | CommandFunction<L, O, Options | O> ) ) {
     const promise = ( $this: DSL<O, L> ) => new Promise<void>( ( resolve, reject ) => {
-      $this.data.messages.push( {
-        ...message,
-        id: uuid(),
+      const messageId = uuid();
+      const _options: ( Options | O ) = typeof options === "function" ? options( $this.locals, $this ) : options;
+      const visibility = _options.visibility !== undefined ? _options.visibility : Visibility.OPTIONAL;
+      const message: Message = {
+        id: messageId,
+        role: _options.role || $this.options.role || "user",
+        content: _options.message.replaceAll( /\n\s+(\w)/gmi, '\n$1' ).trim(),
+        visibility: visibility,
         createdAt: new Date(),
-        updatedAt: new Date()
-      } );
+        updatedAt: new Date(),
+        included: [],
+        user: $this.user
+      };
+      $this.data.messages.push( message );
       $this.out( { ...message, chat: $this.data.id!, type: "message", state: "streaming" } );
       $this.out( { ...message, chat: $this.data.id!, type: "message", state: "final" } );
       resolve();

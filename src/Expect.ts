@@ -3,9 +3,14 @@
 import JSON from "json5";
 import { Message } from "./Chat";
 import { DSL, Locals, Options } from "./DSL";
+
+type JSONValue = string | number | boolean | null | { [ key: string ]: JSONValue; } | JSONValue[];
+
+
+
 export type Expect<O extends Options, L extends Locals> = (
   args: { response: Message, locals: L, chat: DSL<O, L>; }
-) => Promise<{ response: Message, locals: L, chat: DSL<O, L>; blocks: { [ key: string ]: unknown; }[]; }>;
+) => Promise<{ response: Message, locals: L, chat: DSL<O, L>; blocks: JSONValue[]; }>;
 
 export const json: Expect<any, any> = ( { response, locals, chat } ) => {
   return new Promise( ( next, expect ) => {

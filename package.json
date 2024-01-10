@@ -7,7 +7,7 @@
     "test": "jest",
     "build": "tsc",
     "deploy-prod": "npm run build && npm publish --access public",
-    "beta": "npm run build && git add . && git commit -m \"Committing changes before beta deploy\" && npm version prerelease --preid=beta && node prePublish.js && npm publish --tag beta ",
+    "beta": "npm run build && git add . && git commit -m \"Committing changes before beta deploy\" && npm version prerelease --preid=beta && npm publish --tag beta --registry https://npm.pkg.github.com",
     "deploy": "npm run build && git add . && git commit -m \"Committing changes before beta deploy\" && npm version prerelease --preid=beta && npm publish --tag beta"
   },
   "repository": {

@@ -1,24 +1,22 @@
-import { ChatGPT, Options } from "@k-apps.io/llm-dsl-chatgpt";
-import { createWriteStream } from "fs";
-import { DSL } from "../src/DSL";
-import { LocalStorage } from "../src/Storage";
-
-const chat = new DSL<Options, { wasCalled: boolean; }>( {
+import { ChatGPT, Options } from "@k-apps-io/llm-dsl-chatgpt";
+import { DSL, Locals } from "../src/DSL";
+import { stream } from "../src/FileSystem";
+interface ChatLocals extends Locals {
+  wasCalled: boolean;
+}
+const chat = new DSL<Options, ChatLocals, undefined>( {
   llm: new ChatGPT( {
     timeout: 10000
   }, "gpt-3.5-turbo" ),
-  storage: LocalStorage,
   options: {
     model: "gpt-3.5-turbo",
   },
-  metadata: {},
   locals: {
     wasCalled: false
   }
 } );
 describe( ".function", () => {
   it( 'expectFunctionCall', async () => {
-    const fileStream = createWriteStream( `./__tests__/expectFunctionCall.log` );
     const $chat = await chat
       .clone()
       .function<{ unit?: "Fahrenheit" | "Celsius"; }>( {
@@ -64,12 +62,7 @@ describe( ".function", () => {
           resolve();
         } );
       } )
-      .stream( chunk => {
-        if ( chunk.type === "chat" ) fileStream.write( `// chat: ${ chunk.id } - ${ chunk.state }` );
-        if ( chunk.type === "command" ) fileStream.write( `\n${ chunk.content }\n` );
-        if ( ( chunk.type === "message" && chunk.state === "streaming" ) ) fileStream.write( chunk.content );
-      } );
+      .stream( stream( { directory: `${ __dirname }/function` } ) );
     expect( $chat.locals.wasCalled ).toBeTruthy();
-    fileStream.end();
   }, 60000 );
 } );

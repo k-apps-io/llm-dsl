@@ -2,6 +2,9 @@
  * An enum representing the different visibility statuses a message can hold.
  * @enum {number}
  */
+
+import { Metadata } from "./DSL";
+
 // todo rename to Awareness?
 export enum Visibility {
   SYSTEM, // same as optional however the message is tagged as a system message
@@ -41,7 +44,7 @@ export interface Message {
 
   /** 
       * The role authoring the message.
-   * @type {"user" | "assistant"}
+   * @type {"user" | "assistant" | "system"}
    */
   role: "user" | "assistant" | "system";
 
@@ -88,28 +91,22 @@ export interface Message {
   updatedAt: Date;
 
   /**
-   * A list of messages that were included in a prompt (optional).
+   * A list of messages that were included in a prompts context (optional).
    * @type {string[]}
    */
-  included?: { id: string, size: number; }[];
+  context?: string[];
 }
 
 /**
  * Interface representing a chat.
  * @interface
  */
-export interface Chat {
+export interface Chat<M extends Metadata> {
   /** 
    * Unique identifier of the chat (optional).
    * @type {string}
    */
   id?: string;
-
-  /**
-   * The name of the chat.
-   * @type {string}
-   */
-  name: string;
 
   /**
    * Contains the sidebar ids spawned by the chat.
@@ -131,5 +128,5 @@ export interface Chat {
   /**
    * optional metadata to associate with the chat
    */
-  metadata?: { [ key: string ]: any; };
+  metadata?: M;
 }

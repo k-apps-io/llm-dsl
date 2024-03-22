@@ -1,6 +1,7 @@
 export { Chat, CodeBlock, Message, Visibility } from "./Chat";
-export { DSL, Function, FunctionResponse, LLM, Options, Prompt, Stream, TextResponse } from "./DSL";
-export { Expect, json } from "./Expect";
+export { toCodeBlock } from "./CodeBlocks";
+export { DSL, ExpectHandler, Function, FunctionResponse, LLM, Options, Prompt, Stream, TextResponse } from "./DSL";
+export { json } from "./Expect";
+export * as FileSystem from "./FileSystem";
 export { CODE_BLOCK_RULE, Rule } from "./Rules";
-export { ChatStorage, LocalStorage } from "./Storage";
 

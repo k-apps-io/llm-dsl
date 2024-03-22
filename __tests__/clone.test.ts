@@ -1,16 +1,13 @@
-import { ChatGPT, Options } from "@k-apps.io/llm-dsl-chatgpt";
+import { ChatGPT, Options } from "@k-apps-io/llm-dsl-chatgpt";
 import { DSL } from "../src/DSL";
-import { LocalStorage } from "../src/Storage";
 
-const chat = new DSL<Options, any>( {
+const chat = new DSL<Options, any, undefined>( {
   llm: new ChatGPT( {
     timeout: 10000
   }, "gpt-3.5-turbo" ),
-  storage: LocalStorage,
   options: {
     model: "gpt-3.5-turbo",
-  },
-  metadata: {}
+  }
 } );
 describe( ".clone()", () => {
   it( "chat !== clone", async () => {

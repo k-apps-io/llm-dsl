@@ -1,23 +1,22 @@
-import { ChatGPT, Options } from "@k-apps.io/llm-dsl-chatgpt";
-import { createWriteStream } from "fs";
-import { DSL } from "../src/DSL";
+import { ChatGPT, Options } from "@k-apps-io/llm-dsl-chatgpt";
+import { DSL, Locals } from "../src/DSL";
+import { stream } from "../src/FileSystem";
 import { CODE_BLOCK_RULE } from "../src/Rules";
-import { LocalStorage } from "../src/Storage";
 
-const chat = new DSL<Options, any>( {
+interface ChatLocals extends Locals {
+  colors: string[];
+}
+const chat = new DSL<Options, ChatLocals, undefined>( {
   llm: new ChatGPT( {}, "gpt-3.5-turbo" ),
-  storage: LocalStorage,
   options: {
     model: "gpt-3.5-turbo"
   },
-  metadata: {},
   settings: {
     maxCallStack: 3
   }
 } );
 describe( "branchForEach", () => {
   it( 'should not hit the max call stack', async () => {
-    const fileStream = createWriteStream( `./__tests__/branchForEachMaxCallStack.log` );
     try {
       await chat
         .clone()
@@ -38,8 +37,8 @@ describe( "branchForEach", () => {
             ok();
           } );
         } )
-        .branchForEach( ( locals ) => {
-          return locals.colors.map( ( color: string ) => ( {
+        .branchForEach( ( { locals } ) => {
+          return locals.colors.map( color => ( {
             message: `write the word '${ color }' backwards as plain text`
           } as Options ) );
         } )
@@ -49,18 +48,9 @@ describe( "branchForEach", () => {
           } );
         } )
         .join()
-        .stream( chunk => {
-          if ( chunk.type === "chat" ) fileStream.write( `// chat: ${ chunk.id } - ${ chunk.state }` );
-          if ( chunk.type === "command" ) fileStream.write( `\n${ chunk.content }\n` );
-          if ( ( chunk.type === "message" && chunk.state === "streaming" ) ) fileStream.write( chunk.content );
-        } );
+        .stream( stream( { directory: `${ __dirname }/branchForEachMaxCallStack` } ) );
       expect( true ).toBe( true );
-      fileStream.end();
     } catch ( error ) {
-      const e = String( error );
-      fileStream.write( "\n" );
-      fileStream.write( e );
-      fileStream.end();
       expect( false ).toBe( true );
     }
   }, 200000 );

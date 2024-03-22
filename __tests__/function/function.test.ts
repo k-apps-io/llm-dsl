@@ -1,6 +1,7 @@
 import { ChatGPT, Options } from "@k-apps-io/llm-dsl-chatgpt";
-import { DSL, Locals } from "../src/DSL";
-import { stream } from "../src/FileSystem";
+import { DSL, Locals } from "../../src/DSL";
+import { stream, write } from "../../src/FileSystem";
+import { key } from "../../src/Window";
 interface ChatLocals extends Locals {
   wasCalled: boolean;
 }
@@ -13,7 +14,8 @@ const chat = new DSL<Options, ChatLocals, undefined>( {
   },
   locals: {
     wasCalled: false
-  }
+  },
+  window: key
 } );
 describe( ".function", () => {
   it( 'expectFunctionCall', async () => {
@@ -62,7 +64,8 @@ describe( ".function", () => {
           resolve();
         } );
       } )
-      .stream( stream( { directory: `${ __dirname }/function` } ) );
+      .stream( stream( { directory: __dirname, filename: 'function' } ) );
+    write( { directory: __dirname, chat: $chat, filename: 'function' } );
     expect( $chat.locals.wasCalled ).toBeTruthy();
   }, 60000 );
 } );

@@ -1,8 +1,9 @@
 import { ChatGPT, Options } from "@k-apps-io/llm-dsl-chatgpt";
 import { DSL } from "../../src/DSL";
 import { json } from "../../src/Expect";
-import { stream } from "../../src/FileSystem";
+import { stream, write } from "../../src/FileSystem";
 import { CODE_BLOCK_RULE } from "../../src/Rules";
+import { key } from "../../src/Window";
 
 
 describe( ".expect", () => {
@@ -14,7 +15,8 @@ describe( ".expect", () => {
       },
       locals: {
         attempts: 0
-      }
+      },
+      window: key
     } );
     await chat
       .rule( CODE_BLOCK_RULE )
@@ -31,7 +33,8 @@ describe( ".expect", () => {
           resolve();
         }
       } ) )
-      .stream( stream( { directory: __dirname } ) );
+      .stream( stream( { directory: __dirname, filename: 'expectJSON' } ) );
+    write( { directory: __dirname, chat, filename: 'expectJSON' } );
     expect( chat.locals.$blocks ).toBeDefined();
     expect( true ).toBe( true );
   }, 100000 );
@@ -45,7 +48,8 @@ describe( ".expect", () => {
         },
         settings: {
           maxCallStack: 3
-        }
+        },
+        window: key
       } );
       await chat
         .rule( CODE_BLOCK_RULE )
@@ -55,7 +59,8 @@ describe( ".expect", () => {
         .expect( response => new Promise<void>( ( resolve, reject ) => {
           reject( "I need different cities" );
         } ) )
-        .stream( stream( { directory: __dirname } ) );
+        .stream( stream( { directory: __dirname, filename: 'expectCallstackExceeded' } ) );
+      write( { directory: __dirname, chat, filename: 'expectCallstackExceeded' } );
       expect( false ).toBe( true );
     } catch ( error ) {
       expect( String( error ) ).toContain( "Max Call Stack Exceeded" );

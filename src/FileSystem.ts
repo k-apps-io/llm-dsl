@@ -1,31 +1,30 @@
-import { WriteStream, createWriteStream, existsSync, mkdirSync } from "fs";
-import { StreamHandler } from "./DSL";
+import { createWriteStream, writeFileSync } from "fs";
+import { DSL, StreamHandler } from "./DSL";
 
 interface FileSystemOptions {
   directory: string;
+  filename: string;
 }
 
-export const stream = ( { directory }: FileSystemOptions ): StreamHandler => {
-  let fileStreams: { [ key: string ]: WriteStream; } = {};
-  let activeStream: WriteStream | undefined = undefined;
+export const stream = ( { directory, filename }: FileSystemOptions ): StreamHandler => {
+  const fileStream = createWriteStream( `${ directory }/${ filename }.log`, { encoding: "utf-8" } );
   const handler: StreamHandler = ( chunk ) => {
     if ( chunk.type === "chat" || chunk.type === "sidebar" ) {
-      if ( fileStreams[ chunk.id ] === undefined ) {
-        if ( !existsSync( directory ) ) mkdirSync( directory );
-        activeStream = createWriteStream( `${ directory }/${ chunk.id }.log` );
-        fileStreams[ chunk.id ] = activeStream;
-      } else {
-        activeStream = fileStreams[ chunk.id ];
-      }
+      fileStream?.write( `// chat: ${ chunk.id } - ${ chunk.state }\n` );
+      if ( chunk.state === "closed" ) fileStream.end();
     }
-    if ( chunk.type === "chat" || chunk.type === "sidebar" ) {
-      activeStream?.write( `// chat: ${ chunk.id } - ${ chunk.state }` );
-      if ( chunk.state === "closed" ) activeStream?.end();
-      delete fileStreams[ chunk.id ];
-    }
-    if ( chunk.type === "command" ) activeStream?.write( `\n${ chunk.content }\n` );
-    if ( ( chunk.type === "message" && chunk.state === "streaming" ) ) activeStream?.write( chunk.content );
-    if ( chunk.type === "error" ) activeStream?.write( chunk.error );
+    if ( chunk.type === "command" ) fileStream.write( `${ chunk.content }\n` );
+    if ( ( chunk.type === "message" && chunk.state === "streaming" ) ) fileStream.write( chunk.content );
+    if ( ( chunk.type === "message" && chunk.state === "final" ) ) fileStream.write( `\n` );
+    if ( chunk.type === "error" ) fileStream.write( chunk.error );
   };
   return handler;
+};
+
+interface WriteOptions extends FileSystemOptions {
+  chat: DSL<any, any, any>;
+}
+export const write = ( { directory, chat, filename }: WriteOptions ) => {
+  filename = `${ directory }/${ filename ? filename : chat.data.id }.json`;
+  writeFileSync( filename, JSON.stringify( chat.data, null, 2 ) );
 };

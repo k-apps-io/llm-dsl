@@ -1,7 +1,8 @@
 import { ChatGPT, Options } from "@k-apps-io/llm-dsl-chatgpt";
-import { DSL, Locals } from "../src/DSL";
-import { stream } from "../src/FileSystem";
-import { CODE_BLOCK_RULE } from "../src/Rules";
+import { DSL, Locals } from "../../src/DSL";
+import { stream, write } from "../../src/FileSystem";
+import { CODE_BLOCK_RULE } from "../../src/Rules";
+import { key } from "../../src/Window";
 
 interface ChatLocals extends Locals {
   colors: string[];
@@ -13,12 +14,13 @@ const chat = new DSL<Options, ChatLocals, undefined>( {
   },
   settings: {
     maxCallStack: 3
-  }
+  },
+  window: key
 } );
 describe( "branchForEach", () => {
   it( 'should not hit the max call stack', async () => {
     try {
-      await chat
+      const $chat = await chat
         .clone()
         .rule( CODE_BLOCK_RULE )
         .prompt( {
@@ -48,7 +50,8 @@ describe( "branchForEach", () => {
           } );
         } )
         .join()
-        .stream( stream( { directory: `${ __dirname }/branchForEachMaxCallStack` } ) );
+        .stream( stream( { directory: __dirname, filename: 'branchForEach' } ) );
+      write( { directory: __dirname, chat: $chat, filename: 'branchForEach' } );
       expect( true ).toBe( true );
     } catch ( error ) {
       expect( false ).toBe( true );

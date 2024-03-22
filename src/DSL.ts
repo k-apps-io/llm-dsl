@@ -4,6 +4,7 @@ import { v4 as uuid } from "uuid";
 import { Chat, Message as ChatMessage, Message, Visibility } from "./Chat";
 import extractBlocks from "./CodeBlocks";
 import { Rule } from "./Rules";
+import { Window } from "./Window";
 
 /**
  * TODOs
@@ -100,24 +101,33 @@ export type FunctionResponse = {
 };
 
 export interface ChatChunk {
-  type: "chat" | "sidebar";
   id: string;
+  type: "chat" | "sidebar";
   state: "open" | "closed";
   metadata?: { [ key: string ]: unknown; };
 }
 
-export interface MessageChunk extends Omit<Message, "includes" | "codeBlocks" | "createdAt" | "updatedAt"> {
+export interface MessageFinalChunk extends Omit<Message, "includes" | "codeBlocks" | "createdAt" | "updatedAt"> {
+  id: string;
   type: "message";
-  state: "streaming" | "final";
+  state: "final";
+  chat: string;
+}
+
+export interface MessageStreamChunk extends Omit<Message, "includes" | "codeBlocks" | "createdAt" | "updatedAt" | "size"> {
+  id: string;
+  type: "message";
+  state: "streaming";
   chat: string;
 }
 
 export interface CommandChunk {
+  id: string;
   type: "command";
   content: string | Uint8Array;
 }
 
-export type Chunk = ChatChunk | MessageChunk | CommandChunk | { type: "error"; error: unknown; };
+export type Chunk = ChatChunk | MessageFinalChunk | MessageStreamChunk | CommandChunk | { type: "error"; error: unknown; };
 
 export type StreamHandler = ( chunk: Chunk ) => void;
 
@@ -155,6 +165,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
 
   llm: LLM;
   options: Omit<O, "message">;
+  window: Window;
   data: Chat<M>;
   locals: L;
   rules: string[] = [];
@@ -182,23 +193,26 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
   private pipelineCursor: number = -1; // manages current position in the pipeline
   private streamHandlers: StreamHandler[];
 
-  constructor( { llm, options, locals, metadata, settings }: {
+  constructor( { llm, options, locals, metadata, settings, window }: {
     llm: LLM;
     options: Omit<O, "message">;
     locals?: L;
     metadata?: M;
     settings?: Settings;
+    window: Window;
   } ) {
     this.llm = llm;
     this.options = options;
     this.locals = locals || {} as L;
     this.settings = { ...DEFAULT_SETTINGS, ...settings };
     this.streamHandlers = [];
+    this.window = window;
     this.data = {
       id: uuid(),
       messages: [],
       sidebars: [],
-      metadata: metadata
+      metadata: metadata,
+      size: 0
     };
   }
 
@@ -209,72 +223,55 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
    */
   private _prompt( $chat: DSL<O, L, M>, options: O ) {
     return () => new Promise<void>( async ( resolve, reject ) => {
-      const messageTokens = $chat.llm.tokens( options.message );
+      const messageTokens = $chat.llm.tokens( options.message ) + 3;
       const responseSize = ( options.responseSize || $chat.settings.minReponseSize );
-      const limit = $chat.settings.contextWindowSize - responseSize;
-
-      // prepare the messages
-      //  reduce to the latest keys
-      //  calculate the message size
-      let messages = ( cloneDeep( this.data.messages ) as Chat<M>[ "messages" ] )
-        .reduce( ( prev, curr ) => {
-          if ( curr.key !== undefined ) {
-            const prevIndex = prev.map( p => p.key ).indexOf( curr.key );
-            // remove the preivous key
-            if ( prevIndex > -1 ) prev.splice( prevIndex );
-          }
-          // add the message
-          prev.push( curr );
-          return prev;
-        }, [] as Chat<M>[ "messages" ] )
-        .map( m => {
-          let size: number = m.content.match( /\W/g )?.length || 0;
-          try {
-            size = $chat.llm.tokens( m.content );
-          } catch ( error ) { /** ignore */ }
-          return { ...m, size: size };
-        } )
-        ;
-
-      const required = messages.filter( m => m.visibility === Visibility.REQUIRED );
       const functions = Object.keys( $chat.functions ).map( k => $chat.functions[ k ] );
-      const requiredTokens = required.reduce( ( total, curr ) => total + curr.size, 0 );
-      const functionTokens = functions.map( ( { name, description, parameters } ) => $chat.llm.tokens( JSON.stringify( { name, description, parameters } ) ) ).reduce( ( total, curr ) => total + curr, 0 );
-      let totalTokens = requiredTokens + messageTokens + functionTokens;
+      const functionTokens = functions
+        .map( ( { name, description, parameters } ) => {
+          let tokenCount = 7; // 7 for each function to start
+          tokenCount += $chat.llm.tokens( `${ name }:${ description }` );
+          if ( parameters ) {
+            tokenCount += 3;
+            Object.keys( parameters.properties ).forEach( key => {
+              tokenCount += 3;
+              const p_type = parameters.properties[ key ].type;
+              const p_desc = parameters.properties[ key ].description;
+              if ( p_type === "enum" ) {
+                tokenCount += 3;  // Add tokens if property has enum list
+                const options: string[] = parameters.properties[ key ].enum;
+                options.forEach( ( v: any ) => {
+                  tokenCount += 3;
+                  tokenCount += $chat.llm.tokens( String( v ) );
+                } );
+              }
+              tokenCount += $chat.llm.tokens( `${ key }:${ p_type }:${ p_desc }"` );
+            } );
+          }
+          return tokenCount;
+        } ).reduce( ( total, curr ) => total + curr, 0 );
 
-      // build the message window
-      messages = [
-        ...required
-        , ...messages
-          .filter( m => m.visibility !== Visibility.EXCLUDE )
-          .sort( ( a, b ) => b.createdAt.getTime() - a.createdAt.getTime() )
-          .reduce( ( prev, curr ) => {
-            if ( totalTokens + curr.size < limit ) {
-              prev.push( curr );
-              totalTokens += curr.size;
-            }
-            return prev;
-          }, [] as Array<Chat<M>[ "messages" ][ 0 ] & { size: number; }> )
-      ].sort( ( a, b ) => a.createdAt.getTime() - b.createdAt.getTime() );
-
+      const limit = $chat.settings.contextWindowSize - responseSize - messageTokens - functionTokens;
+      const messages = $chat.window( { messages: $chat.data.messages, tokenLimit: limit } );
       const messageId = uuid();
       const visibility = options.visibility !== undefined ? options.visibility : Visibility.OPTIONAL;
+      const role = options.role || $chat.options.role || "user";
       const message: Message = {
         id: messageId,
-        role: options.role || $chat.options.role || "user",
+        role: role,
         content: options.message.replaceAll( /\n\s+(\w)/gmi, '\n$1' ).trim(),
+        size: messageTokens,
         visibility: visibility,
-        createdAt: new Date(),
-        updatedAt: new Date(),
         context: messages.map( ( { id } ) => id! ),
-        user: $chat.user
+        user: $chat.user,
+        createdAt: new Date(),
+        updatedAt: new Date()
       };
       $chat.data.messages.push( message );
       $chat.out( { ...message, chat: $chat.data.id!, type: "message", state: "streaming" } );
       $chat.out( { ...message, chat: $chat.data.id!, type: "message", state: "final" } );
       const _options = { ...$chat.options, ...options, responseSize, visibility };
       const stream = $chat.llm.stream( {
-        messages: [ ...messages.map( m => ( { prompt: m.content, role: m.role } ) ), { prompt: options.message, role: "user" } ],
+        messages: [ ...messages.map( m => ( { prompt: m.content, role: m.role } ) ), { prompt: options.message, role } ],
         functions: functions,
         user: $chat.user,
         ..._options
@@ -291,11 +288,13 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
               const func = $chat.functions[ chunk.name! ];
               if ( func !== undefined ) funcs.push( { ...func, args: chunk.arguments } );
               const content = `call: ${ chunk.name }(${ chunk.arguments })`;
+              const functionSize = $chat.llm.tokens( content );
               const functionUuid = uuid();
               $chat.data.messages.push( {
                 id: functionUuid,
                 role: "assistant",
                 content: content,
+                size: functionSize + 3,
                 visibility: Visibility.SYSTEM,
                 createdAt: new Date(),
                 updatedAt: new Date()
@@ -305,6 +304,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
                 state: "final",
                 role: "assistant",
                 content: content,
+                size: functionSize + 3,
                 chat: $chat.data.id!,
                 id: functionUuid,
                 visibility: Visibility.SYSTEM
@@ -328,7 +328,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
                 buffer = false;
               }
             } else if ( isFunction ) {
-              response += chunk.content;
+              response += chunk.content.trim();
               const match = response.match( /call:\s(\w+?)\((.+?)\)/gi );
               if ( match ) {
                 const name = match[ 1 ];
@@ -342,6 +342,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
                   id: functionUuid,
                   role: "assistant",
                   content: response,
+                  size: $chat.llm.tokens( response ) + 3,
                   visibility: Visibility.SYSTEM,
                   createdAt: new Date(),
                   updatedAt: new Date()
@@ -368,10 +369,12 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
       }
       if ( response.trim() !== "" ) {
         const blocks = extractBlocks( response );
+        const responseSize = $chat.llm.tokens( response ) + 3;
         $chat.data.messages.push( {
           id: responseId,
           role: "assistant",
           content: response,
+          size: responseSize,
           visibility: Visibility.OPTIONAL,
           codeBlocks: blocks.length > 0 ? blocks : undefined,
           createdAt: new Date(),
@@ -382,6 +385,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
           state: "final",
           role: "assistant",
           content: response,
+          size: responseSize,
           chat: $chat.data.id!,
           id: responseId,
           visibility: Visibility.OPTIONAL
@@ -439,7 +443,8 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
       metadata: {
         ...this.data.metadata,
         $parent: this.data.id!
-      }
+      },
+      window: this.window
     } );
     this.data.sidebars.push( sidebar.data.id! );
     sidebar.data.user = this.data.user;
@@ -502,10 +507,12 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
       const messageId = uuid();
       const _options: ( Options | O ) = typeof options === "function" ? options( { locals: $this.locals, chat: $this } ) : options;
       const visibility = _options.visibility !== undefined ? _options.visibility : Visibility.OPTIONAL;
+      const content = _options.message.replaceAll( /\n\s+(\w)/gmi, '\n$1' ).trim();
       const message: Message = {
         id: messageId,
         role: _options.role || $this.options.role || "user",
-        content: _options.message.replaceAll( /\n\s+(\w)/gmi, '\n$1' ).trim(),
+        content: content,
+        size: $this.llm.tokens( content ) + 3,
         visibility: visibility,
         createdAt: new Date(),
         updatedAt: new Date(),
@@ -579,6 +586,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
             role: "system",
             key: _key,
             content: content,
+            size: $this.llm.tokens( content ),
             visibility: Visibility.REQUIRED,
             createdAt: new Date(),
             updatedAt: new Date()
@@ -803,9 +811,13 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
             reject( `Max Call Stack Exceeded - Stage ${ command }: ${ id } - chat: ${ this.data.id }` );
             break;
           }
-          this.out( { type: "command", content: `command: ${ command }\n` } );
+          this.out( { id: stage.id, type: "command", content: `command: ${ command }\n` } );
           await promise( this );
         }
+        const totalTokens = this.data.messages.reduce( ( prev, curr ) => {
+          return prev + curr.size;
+        }, 0 );
+        this.data.size = totalTokens;
         resolve( this );
       } catch ( error ) {
         this.out( { type: "error", error } );

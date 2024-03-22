@@ -40,7 +40,7 @@ export interface Message {
    * Unique identifier of the message (optional).
    * @type {string}
    */
-  id?: string;
+  id: string;
 
   /** 
       * The role authoring the message.
@@ -59,6 +59,11 @@ export interface Message {
    * @type {string}
    */
   content: string;
+
+  /**
+   * The token size of the message
+   */
+  size: number;
 
   /**
    * The visibility status of the message.
@@ -129,4 +134,9 @@ export interface Chat<M extends Metadata> {
    * optional metadata to associate with the chat
    */
   metadata?: M;
+
+  /**
+   * 
+   */
+  size: number;
 }

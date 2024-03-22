@@ -1,5 +1,6 @@
 import { ChatGPT, Options } from "@k-apps-io/llm-dsl-chatgpt";
 import { DSL } from "../src/DSL";
+import { key } from "../src/Window";
 
 const chat = new DSL<Options, any, undefined>( {
   llm: new ChatGPT( {
@@ -7,7 +8,8 @@ const chat = new DSL<Options, any, undefined>( {
   }, "gpt-3.5-turbo" ),
   options: {
     model: "gpt-3.5-turbo",
-  }
+  },
+  window: key
 } );
 describe( ".clone()", () => {
   it( "chat !== clone", async () => {

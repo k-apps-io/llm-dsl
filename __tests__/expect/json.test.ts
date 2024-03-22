@@ -3,6 +3,7 @@ import { Message, Visibility } from "../../src/Chat";
 import extract, { toCodeBlock } from "../../src/CodeBlocks";
 import { DSL } from "../../src/DSL";
 import { json } from "../../src/Expect";
+import { latest } from "../../src/Window";
 
 
 describe( ".expect", () => {
@@ -14,7 +15,8 @@ describe( ".expect", () => {
     },
     settings: {
       maxCallStack: 3
-    }
+    },
+    window: latest( { max: 10 } )
   } );
 
   it( '1 block', async () => {
@@ -22,14 +24,15 @@ describe( ".expect", () => {
     const $chat = chat.clone();
     const content = `${ toCodeBlock( "json", { "key": 1 } ) }`;
     const response: Message = {
+      id: "test",
       role: "assistant",
       content: content,
+      size: 0,
       codeBlocks: extract( content ),
       visibility: Visibility.OPTIONAL,
       createdAt: new Date(),
       updatedAt: new Date()
     };
-    console.log( response );
     const res = await handler( { response, locals: $chat.locals, chat: $chat } );
     const blocks = $chat.locals.$blocks;
     expect( blocks ).toBeDefined();

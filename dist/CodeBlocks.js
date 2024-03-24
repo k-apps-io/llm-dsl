@@ -35,4 +35,3 @@ const toCodeBlock = (lang, value) => {
     return `\`\`\`${lang}\n${value}\`\`\`\n`;
 };
 exports.toCodeBlock = toCodeBlock;
-exports.default = exports.extract;

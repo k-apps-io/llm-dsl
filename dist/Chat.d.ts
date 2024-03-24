@@ -1,14 +1,5 @@
-/**
- * An enum representing the different visibility statuses a message can hold.
- * @enum {number}
- */
 import { Metadata } from "./DSL";
-export declare enum Visibility {
-    SYSTEM = 0,
-    OPTIONAL = 1,
-    REQUIRED = 2,
-    EXCLUDE = 3
-}
+import { Visibility } from "./Window";
 /**
  * Interface representing a code block.
  * @interface
@@ -75,15 +66,10 @@ export interface Message {
      */
     createdAt: Date;
     /**
-     * The time the message was updated.
-     * @type {Date}
-     */
-    updatedAt: Date;
-    /**
-     * A list of messages that were included in a prompts context (optional).
+     * A list of message ids that represent the context window included with a prompt to the llm (optional).
      * @type {string[]}
      */
-    context?: string[];
+    window?: string[];
 }
 /**
  * Interface representing a chat.

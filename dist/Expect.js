@@ -5,12 +5,15 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.json = void 0;
 const json5_1 = __importDefault(require("json5"));
-const json = (options = { blocks: 1 }) => {
-    const { blocks } = options;
-    const handler = ({ response, locals, chat }) => {
+/**
+ * this expects that a response includes json codeBlocks. Each codeBlock will be evaluated into a usuable JSON object which will be
+ * made accessible in the chat locals as $blocks.
+ */
+const json = ({ blocks, errorPrompt, exact } = { blocks: 1, exact: true }) => {
+    const handler = ({ response, chat }) => {
         return new Promise((resolve, expect) => {
             if (response.codeBlocks === undefined) {
-                expect("1 or more json code blocks were expected e.g. ```json /** ... */```");
+                expect(errorPrompt || "1 or more json code blocks were expected in the response e.g. ```json /** ... */```");
                 return;
             }
             const _blocks = [];
@@ -30,9 +33,9 @@ const json = (options = { blocks: 1 }) => {
                 }
             }
             if (_blocks.length === 0) {
-                return expect(`no JSON code blocks were found in the response`);
+                return expect(errorPrompt || "1 or more json code blocks are expected in the response e.g. ```json /** ... */```");
             }
-            else if (_blocks.length !== blocks) {
+            else if (_blocks.length !== blocks && exact) {
                 const was_or_were = blocks === 1 ? "was" : "were";
                 const _was_or_were = _blocks.length === 1 ? "was" : "were";
                 return expect(`${blocks} json code block(s) ${was_or_were} expected but ${_blocks.length} ${_was_or_were} in the response`);

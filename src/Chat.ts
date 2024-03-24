@@ -1,17 +1,7 @@
-/** 
- * An enum representing the different visibility statuses a message can hold.
- * @enum {number}
- */
+
 
 import { Metadata } from "./DSL";
-
-// todo rename to Awareness?
-export enum Visibility {
-  SYSTEM, // same as optional however the message is tagged as a system message
-  OPTIONAL, // may be included in the context window given the size and position
-  REQUIRED, // will always be included in the context window
-  EXCLUDE // will be removed from the context window
-}
+import { Visibility } from "./Window";
 
 /**
  * Interface representing a code block.
@@ -90,16 +80,10 @@ export interface Message {
   createdAt: Date;
 
   /**
-   * The time the message was updated.
-   * @type {Date}
-   */
-  updatedAt: Date;
-
-  /**
-   * A list of messages that were included in a prompts context (optional).
+   * A list of message ids that represent the context window included with a prompt to the llm (optional).
    * @type {string[]}
    */
-  context?: string[];
+  window?: string[];
 }
 
 /**

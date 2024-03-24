@@ -1,9 +1,8 @@
 import { ChatGPT, Options } from "@k-apps-io/llm-dsl-chatgpt";
 import { DSL } from "../../src/DSL";
 import { json } from "../../src/Expect";
-import { stream, write } from "../../src/FileSystem";
 import { CODE_BLOCK_RULE } from "../../src/Rules";
-import { key } from "../../src/Window";
+import { localFileStorage, localFileStream } from "../../src/Stream";
 
 
 describe( ".expect", () => {
@@ -15,8 +14,7 @@ describe( ".expect", () => {
       },
       locals: {
         attempts: 0
-      },
-      window: key
+      }
     } );
     await chat
       .rule( CODE_BLOCK_RULE )
@@ -33,37 +31,31 @@ describe( ".expect", () => {
           resolve();
         }
       } ) )
-      .stream( stream( { directory: __dirname, filename: 'expectJSON' } ) );
-    write( { directory: __dirname, chat, filename: 'expectJSON' } );
+      .stream( localFileStream( { directory: __dirname, filename: 'expectJSON' } ) );
+    localFileStorage( { directory: __dirname, chat, filename: 'expectJSON' } );
     expect( chat.locals.$blocks ).toBeDefined();
     expect( true ).toBe( true );
   }, 100000 );
 
   it( 'expectCallstackExceeded', async () => {
-    try {
-      const chat = new DSL<Options, any, undefined>( {
-        llm: new ChatGPT( {}, "gpt-3.5-turbo" ),
-        options: {
-          model: "gpt-3.5-turbo"
-        },
-        settings: {
-          maxCallStack: 3
-        },
-        window: key
-      } );
-      await chat
-        .rule( CODE_BLOCK_RULE )
-        .prompt( {
-          message: "generate a JSON Array of city names"
-        } )
-        .expect( response => new Promise<void>( ( resolve, reject ) => {
-          reject( "I need different cities" );
-        } ) )
-        .stream( stream( { directory: __dirname, filename: 'expectCallstackExceeded' } ) );
-      write( { directory: __dirname, chat, filename: 'expectCallstackExceeded' } );
-      expect( false ).toBe( true );
-    } catch ( error ) {
-      expect( String( error ) ).toContain( "Max Call Stack Exceeded" );
-    }
+    const chat = new DSL<Options, any, undefined>( {
+      llm: new ChatGPT( {}, "gpt-3.5-turbo" ),
+      options: {
+        model: "gpt-3.5-turbo"
+      },
+      settings: {
+        maxCallStack: 3
+      }
+    } );
+    const $chat = chat
+      .rule( CODE_BLOCK_RULE )
+      .prompt( {
+        message: "generate a JSON Array of city names"
+      } )
+      .expect( response => new Promise<void>( ( resolve, reject ) => {
+        reject( "I need different cities" );
+      } ) )
+      .stream( localFileStream( { directory: __dirname, filename: 'expectCallstackExceeded', append: false } ) );
+    await expect( $chat ).rejects.toThrow();
   }, 200000 );
 } );

@@ -1,4 +1,4 @@
-import extract, { toCodeBlock } from "../../src/CodeBlocks";
+import { extract, toCodeBlock } from "../../src/CodeBlocks";
 
 
 describe( "json", () => {

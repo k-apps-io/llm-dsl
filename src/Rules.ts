@@ -1,4 +1,5 @@
 export interface Rule {
+  id?: string;
   name: string;
   requirement: string;
   key?: string;

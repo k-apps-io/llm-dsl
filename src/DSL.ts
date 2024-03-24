@@ -1,54 +1,29 @@
 import JSON from "json5";
 import { cloneDeep } from "lodash";
 import { v4 as uuid } from "uuid";
-import { Chat, Message as ChatMessage, Message, Visibility } from "./Chat";
-import extractBlocks from "./CodeBlocks";
+import { Chat, Message } from "./Chat";
+import { extract } from "./CodeBlocks";
+import { ResponseStage } from "./Expect";
+import { Function, LLM, Prompt } from "./LLM";
 import { Rule } from "./Rules";
-import { Window } from "./Window";
+import { Chunk, StreamHandler } from "./Stream";
+import { Visibility, Window, main } from "./Window";
+import { LoopError, detectLoop } from "./utilities";
 
 /**
  * TODOs
- *  - chat.exit() => stops the chat, consider that some commands require a certain return type
- *  - chat.seek() => moves the position of the next command
- *  - chat.setVisibility(betweenKey, andKey) => update the visiblity between the two keys
- *  - backoff if context is full
- *  - expect json => check if response is only partial, responseSize is too small
- *  - expect json => provide a validator anonymous function to execute against each block
- *  - provide attemps / context in expect
- *  - set a key on the expectation response? rational is it keeps the context window to a min
- *  - handle require args for functions
- *  - handle rejectsions in functions
- *  - trim prompts with [\n\r]+(\w)
  *  - a step that allows for the user to run a process without generate a prompt / adding a message 
  *     consider a branchForEach ... to join() and the user wants to run a process from the results before
  *     generating a new prompt
  *  - branchForEach - current item in the loop is not accessible from the subsequent commands
  */
 
-
-export interface Prompt {
-  prompt: string;
-  role: "user" | "assistant" | "system";
-}
-
-export interface Function {
-  name: string;
-  parameters: { [ key: string ]: any; };
-  description: string;
-}
-
-interface CommandFunctionArgs<O extends Options, L extends Locals, M extends Metadata> {
+interface StageFunctionArgs<O extends Options, L extends Locals, M extends Metadata> {
   locals: L;
   chat: DSL<O, L, M>;
 }
-export type CommandFunction<O extends Options, L extends Locals, M extends Metadata, F> = ( args: CommandFunctionArgs<O, L, M> ) => F;
+type StageFunction<O extends Options, L extends Locals, M extends Metadata, F> = ( args: StageFunctionArgs<O, L, M> ) => F;
 
-export interface Stream {
-  user?: string;
-  messages: Prompt[];
-  functions: Function[];
-  responseSize: number;
-}
 
 export interface Options {
   /**
@@ -73,93 +48,25 @@ export interface Options {
   responseSize?: number;
   role?: Prompt[ "role" ];
 }
-
+/**
+ * 
+ */
 export interface Locals {
   [ key: string ]: unknown;
 }
 
 export interface Settings {
-  contextWindowSize?: number;
-  minReponseSize?: number;
-  maxCallStack?: number;
+  contextWindowSize: number;
+  minResponseSize: number;
+  maxCallStack: number;
 }
-const DEFAULT_SETTINGS = {
+const DEFAULT_SETTINGS: Settings = {
   contextWindowSize: 4000,
-  minReponseSize: 400,
+  minResponseSize: 400,
   maxCallStack: 10,
 };
 
-export type TextResponse = {
-  type: "text";
-  content: string;
-};
-
-export type FunctionResponse = {
-  type: "function";
-  name: string;
-  arguments: any;
-};
-
-export interface ChatChunk {
-  id: string;
-  type: "chat" | "sidebar";
-  state: "open" | "closed";
-  metadata?: { [ key: string ]: unknown; };
-}
-
-export interface MessageFinalChunk extends Omit<Message, "includes" | "codeBlocks" | "createdAt" | "updatedAt"> {
-  id: string;
-  type: "message";
-  state: "final";
-  chat: string;
-}
-
-export interface MessageStreamChunk extends Omit<Message, "includes" | "codeBlocks" | "createdAt" | "updatedAt" | "size"> {
-  id: string;
-  type: "message";
-  state: "streaming";
-  chat: string;
-}
-
-export interface CommandChunk {
-  id: string;
-  type: "command";
-  content: string | Uint8Array;
-}
-
-export type Chunk = ChatChunk | MessageFinalChunk | MessageStreamChunk | CommandChunk | { type: "error"; error: unknown; };
-
-export type StreamHandler = ( chunk: Chunk ) => void;
-
 export type Metadata = undefined | { [ key: string ]: unknown; };
-
-export interface ExpectHandlerArgs<O extends Options, L extends Locals, M extends Metadata> {
-  response: ChatMessage,
-  locals: L;
-  chat: DSL<O, L, M>;
-}
-export type ExpectHandler<O extends Options, L extends Locals, M extends Metadata> = ( args: ExpectHandlerArgs<O, L, M> ) => Promise<void>;
-
-export abstract class LLM {
-
-  constructor() { }
-  /**
-   * cacluates the total number of tokens for a string
-   * 
-   * @param {string} text : a string to evaluate the number of tokens
-   * @returns {number} : the number of tokens in the string
-   */
-  abstract tokens( text: string ): number;
-
-  /**
-   * creates an iterable stream of the LLM response. The chunks of the stream will
-   * either be text or a function to be called
-   * 
-   * @param {Stream} config 
-   * 
-   */
-  abstract stream( config: Stream ): AsyncIterable<TextResponse | FunctionResponse>;
-}
 
 export class DSL<O extends Options, L extends Locals, M extends Metadata> {
 
@@ -171,13 +78,9 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
   rules: string[] = [];
   type: "chat" | "sidebar" = "chat";
   user?: string = undefined;
-  settings: {
-    contextWindowSize: number;
-    minReponseSize: number;
-    maxCallStack: number;
-  };
+  settings: Settings;
 
-  private functions: {
+  functions: {
     [ key: string ]: (
       Function & {
         func: ( args: any ) => Promise<Options | O>;
@@ -185,28 +88,39 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
       }
     );
   } = {};
-  private pipeline: Array<{
+  pipeline: Array<{
     id: string;
-    command: string;
+    stage: string;
     promise: ( $this: DSL<O, L, M> ) => Promise<void>;
   }> = [];
-  private pipelineCursor: number = -1; // manages current position in the pipeline
-  private streamHandlers: StreamHandler[];
+
+  exitCode?: 1 | Error = undefined;
+  /**
+   * manages the current position of the pipeline
+   */
+  private pipelineCursor: number = -1;
+  /**
+   * these are the stream handlers that will receive any this.out calls
+   */
+  private streamHandlers: StreamHandler[] = [];
 
   constructor( { llm, options, locals, metadata, settings, window }: {
     llm: LLM;
-    options: Omit<O, "message">;
+    options?: Omit<O, "message">;
     locals?: L;
     metadata?: M;
-    settings?: Settings;
-    window: Window;
+    settings?: {
+      contextWindowSize?: number;
+      minResponseSize?: number;
+      maxCallStack?: number;
+    };
+    window?: Window;
   } ) {
     this.llm = llm;
-    this.options = options;
+    this.options = options || {} as Omit<O, "message">;
     this.locals = locals || {} as L;
     this.settings = { ...DEFAULT_SETTINGS, ...settings };
-    this.streamHandlers = [];
-    this.window = window;
+    this.window = window || main;
     this.data = {
       id: uuid(),
       messages: [],
@@ -217,6 +131,417 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
   }
 
   /**
+   * create a sidebar associated with this chat, the metadata of the sidebar
+   * will inherit the main chat's metadata in addition to `parent` which will
+   * be the id of the main chat.
+   * 
+   * @returns DSL
+   */
+  sidebar( { rules: _rules, functions: _functions, locals: _locals }: { rules?: boolean; functions?: boolean; locals?: boolean; } = {} ) {
+    // create a new chat and have a sidebar conversation
+    const sidebar = new DSL<O, L, Metadata & { $parent: string; }>( {
+      llm: this.llm,
+      options: this.options,
+      metadata: {
+        ...( this.data.metadata || {} ),
+        $parent: this.data.id!
+      },
+      window: this.window,
+    } );
+    this.data.sidebars.push( sidebar.data.id! );
+    sidebar.data.user = this.data.user;
+    if ( _rules ) sidebar.pipeline = cloneDeep( this.pipeline.filter( p => p.stage === "rule" ) ) as any;
+    if ( _functions ) sidebar.functions = this.functions;
+    if ( _locals ) sidebar.locals = { ...this.locals };
+    sidebar.type = "sidebar";
+    sidebar.settings = { ...this.settings };
+    return sidebar;
+  }
+
+  /**
+   * apply an identifier representing the user generating the prompts.
+   * 
+   * @param id: a user id to associate with the chat and new prompts
+   */
+  setUser( id: string ) {
+    const promise = ( $this: DSL<O, L, M> ) => new Promise<void>( ( resolve, reject ) => {
+      $this.user = id;
+      if ( $this.data.user === undefined ) $this.data.user = $this.user;
+      resolve();
+    } );
+    this.pipeline.push( { id: uuid(), stage: "setting user", promise } );
+    return this;
+  }
+
+  /**
+   * set locals for the chat
+   * 
+   * @param value: L
+   * @returns DSL
+   */
+  setLocals( locals: L ) {
+    const promise = ( $this: DSL<O, L, M> ) => new Promise<void>( ( resolve, reject ) => {
+      $this.locals = locals;
+      resolve();
+    } );
+    this.pipeline.push( { id: uuid(), stage: "setting locals", promise } );
+    return this;
+  }
+
+  /**
+   * set metadata for the chat
+   */
+  setMetadata( metadata: M ) {
+    const promise = ( $this: DSL<O, L, M> ) => new Promise<void>( ( resolve, reject ) => {
+      $this.data.metadata = metadata;
+      resolve();
+    } );
+    this.pipeline.push( { id: uuid(), stage: "setting metadata", promise } );
+    return this;
+  }
+
+  /**
+   * add a message to the chat without generating a prompt.
+   */
+  push( options: ( Options | O | StageFunction<O, L, M, Options | O> ), id: string = uuid() ) {
+    const promise = ( $this: DSL<O, L, M> ) => new Promise<void>( ( resolve, reject ) => {
+      const messageId = uuid();
+      const _options: ( Options | O ) = typeof options === "function" ? options( { locals: $this.locals, chat: $this } ) : options;
+      const visibility = _options.visibility !== undefined ? _options.visibility : Visibility.OPTIONAL;
+      const content = _options.message.replaceAll( /\n\s+(\w)/gmi, '\n$1' ).trim();
+      const message: Message = {
+        id: messageId,
+        role: _options.role || $this.options.role || "user",
+        content: content,
+        size: $this.llm.tokens( content ) + 3,
+        visibility: visibility,
+        createdAt: new Date(),
+        window: [],
+        user: $this.user
+      };
+      $this.data.messages.push( message );
+      $this.out( { ...message, chat: $this.data.id!, type: "message" } );
+      resolve();
+    } );
+    this.pipeline.push( { id: id, stage: "push", promise } );
+    return this;
+  }
+
+  /**
+   * send a new prompt to the LLM including the chat history
+   * 
+   * @param options 
+   * @returns {object} - the chat object   
+   */
+  prompt( options: ( Options | O | StageFunction<O, L, M, Options | O> ), id: string = uuid() ) {
+    const promise = ( $this: DSL<O, L, M> ) => {
+      return new Promise<void>( ( resolve, reject ) => {
+        const _options: ( Options | O ) = typeof options === "function" ? options( { locals: $this.locals, chat: $this } ) : options;
+        $this._prompt( $this, { ...$this.options, ..._options } as O )()
+          .then( () => resolve() )
+          .catch( reject );
+      } );
+    };
+    this.pipeline.push( { id: id, stage: "prompt", promise } );
+    return this;
+  }
+
+  /**
+   * create 1 or more prompts from the chat context
+   * 
+   * @param func 
+   * @returns {object} - the chat object   
+   */
+  promptForEach( func: StageFunction<O, L, M, ( Options | O )[]>, id: string = uuid() ) {
+    const promise = ( $this: DSL<O, L, M> ) => {
+      return new Promise<void>( ( resolve, reject ) => {
+        const promises = func( { locals: $this.locals, chat: $this } )
+          .map( p => {
+            return { id: uuid(), stage: "prompt", promise: $this._prompt( $this, { ...$this.options, ...p } as O ) };
+          } );
+        $this.pipeline = [
+          ...$this.pipeline.slice( 0, $this.pipelineCursor + 1 ),
+          ...promises,
+          ...$this.pipeline.slice( $this.pipelineCursor + 1 )
+        ];
+        resolve();
+      } );
+    };
+    this.pipeline.push( { id: id, stage: "promptForEach", promise } );
+    return this;
+  }
+
+  /**
+   * create a branch of prompts from the chat context. Each branch will include all
+   * prompts up to a .join() command.
+   * 
+   * @param func 
+   * @returns {object} - the chat object   
+   */
+  branchForEach( func: StageFunction<O, L, M, ( Options | O )[]>, id: string = uuid() ) {
+    const promise = ( $this: DSL<O, L, M> ) => {
+      return new Promise<void>( ( resolve, reject ) => {
+        const promises = func( { locals: $this.locals, chat: $this } ).map( p => {
+          return { id: uuid(), stage: "prompt", promise: $this._prompt( $this, { ...$this.options, ...p } as O ) };
+        } );
+        const joinIndex = $this.pipeline.slice( $this.pipelineCursor ).map( p => p.stage ).indexOf( "join" );
+        if ( joinIndex === -1 ) {
+          reject( "branchForEach requires a join()" );
+          return;
+        }
+        $this.pipeline = [
+          ...$this.pipeline.slice( 0, $this.pipelineCursor + 1 ),
+          ...promises.flatMap( p => [ p, ...$this.pipeline.slice( $this.pipelineCursor + 1, joinIndex + $this.pipelineCursor ) ] ),
+          ...$this.pipeline.slice( joinIndex + $this.pipelineCursor + 1 )
+        ];
+        resolve();
+      } );
+    };
+    this.pipeline.push( { id: id, stage: "branchForEach", promise } );
+    return this;
+  }
+
+  /**
+   * establishes a stopping point for the `branchForEach`
+   */
+  join( id: string = uuid() ) {
+    // see forEachBranch
+    this.pipeline.push( { id: id, stage: "join", promise: ( $this: DSL<O, L, M> ) => new Promise<void>( ( resolve ) => resolve() ) } );
+    return this;
+  }
+
+  /**
+   * load a chat from storage
+   * 
+   * @param {string} id - a chat uuid 
+   * @returns {object} - the chat object   
+   */
+  load( func: ( id: string ) => Chat<M> | Promise<Chat<M>>, id: string = uuid() ) {
+    const promise = ( $this: DSL<O, L, M> ) => new Promise<void>( async ( resolve, reject ) => {
+      const result = func( "someId" );
+      if ( result instanceof Promise ) {
+        $this.data = await result;
+      } else {
+        $this.data = result;
+      }
+    } );
+    this.pipeline.push( { id: id, stage: "load", promise } );
+    return this;
+  }
+
+  /**
+   * create a clone of the chat pipeline with unique ids and as new object in memory
+   * 
+   * @returns a clone of the chat object
+   */
+  clone() {
+    const $this = cloneDeep( this );
+    $this.data.id = uuid();
+    $this.data.messages = $this.data.messages.map( m => {
+      const index = $this.rules.indexOf( m.id! );
+      m.id = uuid();
+      if ( index !== -1 ) {
+        $this.rules[ index ] = m.id;
+      }
+      return m;
+    } );
+    return $this;
+  }
+
+  /**
+   * create a rule for the chat
+   * 
+   * @param options 
+   * @returns {object} - the chat object
+   */
+  rule( options: ( Rule | StageFunction<O, L, M, Rule> ) ) {
+    const promise = ( $this: DSL<O, L, M> ) => {
+      const { name, requirement, key, id }: Rule = typeof options === "function" ? options( { locals: $this.locals, chat: $this } ) : options;
+      const content = `This conversation has the following rule: Rule ${ name } - requirement - ${ requirement }`;
+      return new Promise<void>( ( resolve, reject ) => {
+        const ruleId = id || uuid();
+        const _key = key || `Rule - ${ name }`;
+        const index = $this.data.messages.map( m => m.key ).indexOf( _key );
+        if ( index === -1 || $this.data.messages[ index ].content !== content ) {
+          $this.data.messages.push( {
+            id: ruleId,
+            role: "system",
+            key: _key,
+            content: content,
+            size: $this.llm.tokens( content ) + 3,
+            visibility: Visibility.REQUIRED,
+            createdAt: new Date()
+          } );
+          $this.rules.push( ruleId );
+        }
+        resolve();
+      } );
+    };
+    this.pipeline.push( { id: uuid(), stage: "rule", promise } );
+    return this;
+  }
+
+  /**
+   * add a function the LLM can call from the chat
+   * 
+   * @param options 
+   * @returns {object} - the chat object
+   */
+  function<F>( options: Function & { func: ( args: F & { locals: L, chat: DSL<O, L, M>; } ) => Promise<Options | O>; } ) {
+    const { name } = options;
+    this.functions[ name ] = { ...options, calls: 0 };
+    return this;
+  }
+
+  /**
+   * directly access the LLM response the latest prompt.
+   */
+  response( func: ResponseStage<O, L, M>, id: string = uuid() ) {
+    const promise = ( $this: DSL<O, L, M> ) => {
+      return func( { response: $this.data.messages[ $this.data.messages.length - 1 ], locals: $this.locals, chat: $this } );
+    };
+    this.pipeline.push( { id: id, stage: "response", promise } );
+    return this;
+  }
+
+  /**
+   * Establish expectations for the response from the LLM.
+   * When the 'reject' method is called, you can provide a message outlining your criteria. This rejection then becomes
+   * a new prompt to the LLM which again the response is evaluted against the expecations. 
+   * 
+   * this doesn't support stage id assignment b/c of the rest arguments
+   * 
+   */
+  expect( handler: ResponseStage<O, L, M>, ...others: ResponseStage<O, L, M>[] ) {
+    const handlers = [ handler, ...others ];
+    for ( const handler of handlers ) {
+      const stageId = uuid();
+      const promise = ( $this: DSL<O, L, M> ) => {
+        return new Promise<void>( async ( resolve, reject ) => {
+          const response = $this.data.messages[ $this.data.messages.length - 1 ];
+          handler( { response: response, locals: $this.locals, chat: $this } )
+            .then( () => resolve() )
+            .catch( expectation => {
+              if ( typeof expectation !== "string" ) {
+                reject( expectation );
+                return;
+              }
+              // an expecatation was thrown
+              // push an dispute prompt as the next stage
+              // followed by this expect promise again so it can be re-evaluated
+              $this.pipeline = [
+                ...$this.pipeline.slice( 0, $this.pipelineCursor + 1 ),
+                {
+                  id: stageId,
+                  stage: `dispute`,
+                  promise: $this._prompt( $this, {
+                    ...$this.options,
+                    role: "system",
+                    visibility: Visibility.SYSTEM,
+                    message: `the prior response did not meet expectations: ${ expectation }`,
+                    responseSize: Math.floor( $this.settings.contextWindowSize * 0.25 )
+                  } as O
+                  )
+                },
+                ...$this.pipeline.slice( $this.pipelineCursor )
+              ];
+              resolve();
+            } );
+        } );
+      };
+      this.pipeline.push( { id: stageId, stage: "expect", promise } );
+    }
+    return this;
+  }
+
+  /**
+   * handlers to receive the chat stream and execute the pipeline
+   */
+  async stream( handler: StreamHandler, ...others: StreamHandler[] ) {
+    this.streamHandlers = [ handler, ...others ];
+    return this.execute();
+  }
+
+  /**
+   * executes the pipeline
+   * 
+   * @returns {Promise}
+   */
+  async execute() {
+    return new Promise<DSL<O, L, M>>( async ( resolve, reject ) => {
+      try {
+        let hasNext = true;
+        this.out( { type: this.type, id: this.data.id!, state: "open" } );
+        while ( hasNext ) {
+
+          // check for an exit code
+          if ( this.exitCode ) {
+            if ( this.exitCode !== 1 ) throw this.exitCode;
+            hasNext = false;
+            continue;
+          }
+
+          // evaluate the call stack for a loop
+          const slice = this.pipeline.slice( 0, this.pipelineCursor );
+          const result = detectLoop( slice.map( ( { id } ) => id ), this.settings.maxCallStack );
+          if ( result.loop ) throw new LoopError( result );
+
+          // perform the stage
+          this.pipelineCursor += 1;
+          const item = this.pipeline[ this.pipelineCursor ];
+          if ( item === undefined ) break;
+          const { promise, stage, id } = item;
+          this.out( { id: id, type: "stage", content: stage } );
+          await promise( this );
+        }
+        const totalTokens = this.data.messages.reduce( ( prev, curr ) => {
+          return prev + curr.size;
+        }, 0 );
+        this.data.size = totalTokens;
+        resolve( this );
+      } catch ( error ) {
+        this.out( { id: uuid(), type: "error", error } );
+        reject( error );
+      } finally {
+        this.out( { type: this.type, id: this.data.id!, state: "closed" } );
+      }
+    } );
+  }
+
+  /**
+   * when called the pipeline will stop executing after the current stage is completed. If an error is provided this
+   * will be thrown as a new Error()
+   */
+  exit( error: Error | 1 = 1 ) {
+    this.exitCode = error;
+  }
+
+  /**
+   * sets the position of the pipeline to the stage with the provided id. If a id matches the stage will be executed
+   * next and continue from that position. If a stage is not found a error is thrown.
+   */
+  moveTo( { id }: { id: string; } ) {
+    const promise = ( $this: DSL<O, L, M> ) => {
+      return new Promise<void>( ( resolve, reject ) => {
+        const index = $this.pipeline.findIndex( ( { id: _id } ) => _id === id );
+        if ( index === -1 ) {
+          return reject( new Error( `No Pipeline Stage with id ${ id }` ) );
+        }
+        // apply the prior index b/c the execute process auto increments the
+        // pipelineCursor by 1 before each stage
+        $this.pipelineCursor = index - 1;
+        resolve();
+      } );
+    };
+    this.pipeline = [
+      ...this.pipeline.slice( 0, this.pipelineCursor + 1 ),
+      { id: uuid(), stage: "seek", promise },
+      ...this.pipeline.slice( this.pipelineCursor + 1 )
+    ];
+    return this;
+  }
+
+  /**
    * 
    * @param options : the prompt options
    * @returns Promise<void>
@@ -224,7 +549,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
   private _prompt( $chat: DSL<O, L, M>, options: O ) {
     return () => new Promise<void>( async ( resolve, reject ) => {
       const messageTokens = $chat.llm.tokens( options.message ) + 3;
-      const responseSize = ( options.responseSize || $chat.settings.minReponseSize );
+      const responseSize = ( options.responseSize || $chat.settings.minResponseSize );
       const functions = Object.keys( $chat.functions ).map( k => $chat.functions[ k ] );
       const functionTokens = functions
         .map( ( { name, description, parameters } ) => {
@@ -261,14 +586,12 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
         content: options.message.replaceAll( /\n\s+(\w)/gmi, '\n$1' ).trim(),
         size: messageTokens,
         visibility: visibility,
-        context: messages.map( ( { id } ) => id! ),
+        window: messages.map( ( { id } ) => id! ),
         user: $chat.user,
-        createdAt: new Date(),
-        updatedAt: new Date()
+        createdAt: new Date()
       };
       $chat.data.messages.push( message );
-      $chat.out( { ...message, chat: $chat.data.id!, type: "message", state: "streaming" } );
-      $chat.out( { ...message, chat: $chat.data.id!, type: "message", state: "final" } );
+      $chat.out( { ...message, type: "message", chat: $chat.data.id! } );
       const _options = { ...$chat.options, ...options, responseSize, visibility };
       const stream = $chat.llm.stream( {
         messages: [ ...messages.map( m => ( { prompt: m.content, role: m.role } ) ), { prompt: options.message, role } ],
@@ -288,26 +611,21 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
               const func = $chat.functions[ chunk.name! ];
               if ( func !== undefined ) funcs.push( { ...func, args: chunk.arguments } );
               const content = `call: ${ chunk.name }(${ chunk.arguments })`;
-              const functionSize = $chat.llm.tokens( content );
+              const functionSize = $chat.llm.tokens( content ) + 3;
               const functionUuid = uuid();
-              $chat.data.messages.push( {
+              const functionMessage: Message = {
                 id: functionUuid,
                 role: "assistant",
                 content: content,
-                size: functionSize + 3,
+                size: functionSize,
                 visibility: Visibility.SYSTEM,
-                createdAt: new Date(),
-                updatedAt: new Date()
-              } );
+                createdAt: new Date()
+              };
+              $chat.data.messages.push( functionMessage );
               $chat.out( {
+                ...functionMessage,
                 type: "message",
-                state: "final",
-                role: "assistant",
-                content: content,
-                size: functionSize + 3,
-                chat: $chat.data.id!,
-                id: functionUuid,
-                visibility: Visibility.SYSTEM
+                chat: $chat.data.id!
               } );
             } else if ( buffer ) {
               response += chunk.content;
@@ -317,12 +635,11 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
                 } else {
                   $chat.out( {
                     id: responseId,
-                    type: "message",
-                    state: "streaming",
+                    type: "response",
                     role: "assistant",
                     content: response,
                     chat: $chat.data.id!,
-                    visibility: Visibility.OPTIONAL
+                    visibility: visibility
                   } );
                 }
                 buffer = false;
@@ -338,27 +655,27 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
                 isFunction = false;
                 buffer = true;
                 const functionUuid = uuid();
-                $chat.data.messages.push( {
+                const functionMessage: Message = {
                   id: functionUuid,
                   role: "assistant",
                   content: response,
                   size: $chat.llm.tokens( response ) + 3,
                   visibility: Visibility.SYSTEM,
-                  createdAt: new Date(),
-                  updatedAt: new Date()
-                } );
+                  createdAt: new Date()
+                };
+                $chat.data.messages.push( functionMessage );
+                $chat.out( { ...functionMessage, chat: $chat.data.id!, type: "message" } );
                 response = "";
               }
             } else {
               response += chunk.content;
               $chat.out( {
                 id: responseId,
-                type: "message",
-                state: "streaming",
+                type: "response",
                 role: "assistant",
                 content: chunk.content,
                 chat: $chat.data.id!,
-                visibility: Visibility.OPTIONAL
+                visibility: visibility
               } );
             }
           }
@@ -367,37 +684,33 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
         reject( error );
         return;
       }
+      // response has finished streaming
       if ( response.trim() !== "" ) {
-        const blocks = extractBlocks( response );
+        const blocks = extract( response );
         const responseSize = $chat.llm.tokens( response ) + 3;
-        $chat.data.messages.push( {
+        const responseMessage: Message = {
           id: responseId,
           role: "assistant",
           content: response,
           size: responseSize,
-          visibility: Visibility.OPTIONAL,
+          visibility: visibility,
           codeBlocks: blocks.length > 0 ? blocks : undefined,
-          createdAt: new Date(),
-          updatedAt: new Date()
-        } );
-        $chat.out( {
-          type: "message",
-          state: "final",
-          role: "assistant",
-          content: response,
-          size: responseSize,
-          chat: $chat.data.id!,
-          id: responseId,
-          visibility: Visibility.OPTIONAL
-        } );
+          createdAt: new Date()
+        };
+        $chat.data.messages.push( responseMessage );
+        $chat.out( { ...responseMessage, type: "message", chat: $chat.data.id! } );
       }
+
+      // evaluate the functions is one was called;
       let position = 1;
-      const currentCommand = $chat.pipeline[ $chat.pipelineCursor ].command;
+      const currentStage = $chat.pipeline[ $chat.pipelineCursor ].stage;
       for ( const func of funcs ) {
         const { func: promise, parameters, name, args } = func!;
         const calls = $chat.functions[ name ].calls;
-        if ( calls > 2 && currentCommand === name ) {
-          reject( `Function Loop - function: ${ name }` );
+        if ( calls > 2 && currentStage === name ) {
+          // this function has been called multiple times within the current stage
+          //  which is going to be treated as a never resolving loop.
+          reject( new Error( `Function Loop - function: ${ name }` ) );
           return;
         }
         $chat.functions[ name ].calls += 1;
@@ -406,18 +719,27 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
         try {
           params = args !== "" ? JSON.parse( args! ) : {};
         } catch ( error ) {
-          // todo log
+          $chat.out( { id: uuid(), type: "error", error } );
         }
-        const prompt = await promise( { ...params, locals: $chat.locals, chat: $chat } );
-        prompt.message = `here is the result of your call ${ name }(): ${ prompt.message.replaceAll( /\n\s+(\w)/gmi, '\n$1' ).trim() }`;
+        let prompt: O | Options;
+        try {
+          prompt = await promise( { ...params, locals: $chat.locals, chat: $chat } );
+          prompt.message = `here is the result of your call ${ name }(): ${ prompt.message.replaceAll( /\n\s+(\w)/gmi, '\n$1' ).trim() }`;
+        } catch ( error ) {
+          prompt = {
+            message: `an error occurred in call ${ name }(): ${ error }`
+          };
+        }
         prompt.role = "system";
-        const command = { id: uuid(), command: name, promise: $chat._prompt( $chat, { ...$chat.options, ...prompt } as O ) };
+        const stage = { id: uuid(), stage: name, promise: $chat._prompt( $chat, { ...$chat.options, ...prompt } as O ) };
         if ( $chat.pipelineCursor === $chat.pipeline.length ) {
-          $chat.pipeline.push( command );
+          // end of the chat, just need to push the new stage
+          $chat.pipeline.push( stage );
         } else {
+          // middle of pipeline, we need to insert the stage in the current position and shift all subsequent stages
           $chat.pipeline = [
             ...$chat.pipeline.slice( 0, $chat.pipelineCursor + position ),
-            command,
+            stage,
             ...$chat.pipeline.slice( $chat.pipelineCursor + position )
           ];
         }
@@ -427,404 +749,10 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
     } );
   }
 
-  /**
-   * create a sidebar associated with this chat, the metadata of the sidebar
-   * will inherit the main chat's metadaa in addition to `parent` which will
-   * be the id of the main chant
-   * 
-   * @param name: the name of the sidebar chat 
-   * @returns 
-   */
-  sidebar() {
-    // create a new chat and have a sidebar conversation
-    const sidebar = new DSL<O, L, Metadata & { $parent: string; }>( {
-      llm: this.llm,
-      options: this.options,
-      metadata: {
-        ...this.data.metadata,
-        $parent: this.data.id!
-      },
-      window: this.window
-    } );
-    this.data.sidebars.push( sidebar.data.id! );
-    sidebar.data.user = this.data.user;
-    sidebar.functions = this.functions;
-    sidebar.rules = this.rules;
-    sidebar.locals = { ...this.locals };
-    sidebar.type = "sidebar";
-    sidebar.settings = { ...this.settings };
-    // todo apply the messages onto the sidebar
-    return sidebar;
-  }
-
-  /**
-   * 
-   * @param id: a user id to associate with the chat and new prompts
-   */
-  setUser( id: string ) {
-    const promise = ( $this: DSL<O, L, M> ) => new Promise<void>( ( resolve, reject ) => {
-      $this.user = id;
-      if ( $this.data.user === undefined ) $this.data.user = $this.user;
-      resolve();
-    } );
-    this.pipeline.push( { id: uuid(), command: "setting user", promise } );
-    return this;
-  }
-
-  /**
-   * set the context for the chat
-   * 
-   * @param value 
-   * @returns 
-   */
-  setLocals( locals: L ) {
-    const promise = ( $this: DSL<O, L, M> ) => new Promise<void>( ( resolve, reject ) => {
-      $this.locals = locals;
-      resolve();
-    } );
-    this.pipeline.push( { id: uuid(), command: "setting locals", promise } );
-    return this;
-  }
-
-  setMetadata( metadata: M ) {
-    const promise = ( $this: DSL<O, L, M> ) => new Promise<void>( ( resolve, reject ) => {
-      $this.data.metadata = metadata;
-      resolve();
-    } );
-    this.pipeline.push( { id: uuid(), command: "setting metadata", promise } );
-    return this;
-  }
-
-  /**
-   * todo
-   * add a message to the end of the chat without generating a prompt.
-   * 
-   * @param message - a custom message to add to the chat
-   * @returns 
-   */
-  push( options: ( Options | O | CommandFunction<O, L, M, Options | O> ) ) {
-    const promise = ( $this: DSL<O, L, M> ) => new Promise<void>( ( resolve, reject ) => {
-      const messageId = uuid();
-      const _options: ( Options | O ) = typeof options === "function" ? options( { locals: $this.locals, chat: $this } ) : options;
-      const visibility = _options.visibility !== undefined ? _options.visibility : Visibility.OPTIONAL;
-      const content = _options.message.replaceAll( /\n\s+(\w)/gmi, '\n$1' ).trim();
-      const message: Message = {
-        id: messageId,
-        role: _options.role || $this.options.role || "user",
-        content: content,
-        size: $this.llm.tokens( content ) + 3,
-        visibility: visibility,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-        context: [],
-        user: $this.user
-      };
-      $this.data.messages.push( message );
-      $this.out( { ...message, chat: $this.data.id!, type: "message", state: "streaming" } );
-      $this.out( { ...message, chat: $this.data.id!, type: "message", state: "final" } );
-      resolve();
-    } );
-    this.pipeline.push( { id: uuid(), command: "push", promise } );
-    return this;
-  }
-
-  /**
-   * load a chat from storage
-   * 
-   * @param {string} id - a chat uuid 
-   * @returns {object} - the chat object   
-   */
-  load( func: ( id: string ) => Chat<M> | Promise<Chat<M>> ) {
-    const promise = ( $this: DSL<O, L, M> ) => new Promise<void>( async ( resolve, reject ) => {
-      const result = func( "someId" );
-      if ( result instanceof Promise ) {
-        $this.data = await result;
-      } else {
-        $this.data = result;
-      }
-    } );
-    this.pipeline.push( { id: uuid(), command: "load", promise } );
-    return this;
-  }
-
-  /**
-   * create a clone of the chat pipeline with unique ids and as new object in memory
-   * 
-   * @returns a clone of the chat object
-   */
-  clone() {
-    const $this = cloneDeep( this );
-    $this.data.id = uuid();
-    $this.data.messages = $this.data.messages.map( m => {
-      const index = $this.rules.indexOf( m.id! );
-      m.id = uuid();
-      if ( index !== -1 ) {
-        $this.rules[ index ] = m.id;
-      }
-      return m;
-    } );
-    return $this;
-  }
-
-  /**
-   * create a rule for the chat
-   * 
-   * @param options 
-   * @returns {object} - the chat object
-   */
-  rule( options: ( Rule | CommandFunction<O, L, M, Rule> ) ) {
-    const promise = ( $this: DSL<O, L, M> ) => {
-      const { name, requirement, key }: Rule = typeof options === "function" ? options( { locals: $this.locals, chat: $this } ) : options;
-      const content = `This conversation has the following rule: Rule ${ name } - requirement - ${ requirement }`;
-      return new Promise<void>( ( resolve, reject ) => {
-        const ruleId = uuid();
-        const _key = key || `Rule - ${ name }`;
-        const index = $this.data.messages.map( m => m.key ).indexOf( _key );
-        if ( index === -1 || $this.data.messages[ index ].content !== content ) {
-          $this.data.messages.push( {
-            id: ruleId,
-            role: "system",
-            key: _key,
-            content: content,
-            size: $this.llm.tokens( content ),
-            visibility: Visibility.REQUIRED,
-            createdAt: new Date(),
-            updatedAt: new Date()
-          } );
-          $this.rules.push( ruleId );
-        }
-        resolve();
-      } );
-    };
-    this.pipeline.push( { id: uuid(), command: "rule", promise } );
-    return this;
-  }
-
-  /**
-   * create a function the LLM can call from the chat
-   * 
-   * @param options 
-   * @returns {object} - the chat object
-   */
-  function<F>( options: Function & { func: ( args: F & { locals: L, chat: DSL<O, L, M>; } ) => Promise<Options | O>; } ) {
-    const { name } = options;
-    this.functions[ name ] = { ...options, calls: 0 };
-    return this;
-  }
-
-  /**
-   * send a new prompt to the LLM including the chat history
-   * 
-   * @param options 
-   * @returns {object} - the chat object   
-   */
-  prompt( options: ( Options | O | CommandFunction<O, L, M, Options | O> ) ) {
-    const promise = ( $this: DSL<O, L, M> ) => {
-      return new Promise<void>( ( resolve, reject ) => {
-        const _options: ( Options | O ) = typeof options === "function" ? options( { locals: $this.locals, chat: $this } ) : options;
-        $this._prompt( $this, { ...$this.options, ..._options } as O )()
-          .then( () => resolve() )
-          .catch( reject );
-      } );
-    };
-    this.pipeline.push( { id: uuid(), command: "prompt", promise } );
-    return this;
-  }
-  /**
-   * a hook to direclty access the LLM response of the latest prompt
-   * 
-   * @param func 
-   * @returns {object} - the chat object   
-   */
-  response( func: ( args: { response: ChatMessage, locals: L, chat: DSL<O, L, M>; } ) => Promise<void> ) {
-    const promise = ( $this: DSL<O, L, M> ) => {
-      return new Promise<void>( ( resolve, reject ) => {
-        func( { response: $this.data.messages[ $this.data.messages.length - 1 ], locals: $this.locals, chat: $this } )
-          .then( resolve )
-          .catch( reject );
-      } );
-    };
-    this.pipeline.push( { id: uuid(), command: "response", promise } );
-    return this;
-  }
-
-  /**
-   * Establish expectations for the response from the Language Model (LLM) and initiate a dispute resolution process if necessary.
-   * When the 'reject' method is called, you can provide a message outlining your criteria, and a sidebar chat will be created to resolve
-   * any discrepancies between the LLM's response and your expectations.
-   * 
-   * The sidebar chat will persistently evaluate LLM responses through the 'expect' method until the response aligns with your expectations
-   * or the maximum retry limit is reached.
-   * 
-   * @param {function(response: ChatMessage): Promise<void>} func - A function to assess the LLM response.
-   * @returns {object} - The chat object that can be used for further interactions.
-   */
-  expect( handler: ExpectHandler<O, L, M>, ...others: ExpectHandler<O, L, M>[] ) {
-    const handlers = [ handler, ...others ];
-    for ( const handler of handlers ) {
-      const stageId = uuid();
-      const promise = ( $this: DSL<O, L, M> ) => {
-        return new Promise<void>( async ( resolve, reject ) => {
-          const response = $this.data.messages[ $this.data.messages.length - 1 ];
-          handler( { response: response, locals: $this.locals, chat: $this } )
-            .then( () => resolve() )
-            .catch( expectation => {
-              if ( typeof expectation !== "string" ) {
-                reject( expectation );
-                return;
-              }
-              // an expecatation was thrown
-              // push an dispute prompt as the next stage
-              // followed by this expect promise again so it can be re-evaluated
-              $this.pipeline = [
-                ...$this.pipeline.slice( 0, $this.pipelineCursor + 1 ),
-                {
-                  id: stageId,
-                  command: `dispute`,
-                  promise: $this._prompt( $this, {
-                    ...$this.options,
-                    role: "system",
-                    visibility: Visibility.SYSTEM,
-                    message: `the prior response did not meet expectations: ${ expectation }`,
-                    responseSize: Math.floor( $this.settings.contextWindowSize * 0.25 )
-                  } as O
-                  )
-                },
-                ...$this.pipeline.slice( $this.pipelineCursor )
-              ];
-              resolve();
-            } );
-        } );
-      };
-      this.pipeline.push( { id: stageId, command: "expect", promise } );
-    }
-    return this;
-  }
-
-  /**
-   * create 1 or more prompts from the chat context
-   * 
-   * @param func 
-   * @returns {object} - the chat object   
-   */
-  promptForEach( func: CommandFunction<O, L, M, ( Options | O )[]> ) {
-    const promise = ( $this: DSL<O, L, M> ) => {
-      return new Promise<void>( ( resolve, reject ) => {
-        const promises = func( { locals: $this.locals, chat: $this } )
-          .map( p => {
-            return { id: uuid(), command: "prompt", promise: $this._prompt( $this, { ...$this.options, ...p } as O ) };
-          } );
-        $this.pipeline = [
-          ...$this.pipeline.slice( 0, $this.pipelineCursor + 1 ),
-          ...promises,
-          ...$this.pipeline.slice( $this.pipelineCursor + 1 )
-        ];
-        resolve();
-      } );
-    };
-    this.pipeline.push( { id: uuid(), command: "promptForEach", promise } );
-    return this;
-  }
-
-  /**
-   * create a branch of prompts from the chat context. Each branch will include all
-   * prompts up to a .join() command.
-   * 
-   * @param func 
-   * @returns {object} - the chat object   
-   */
-  branchForEach( func: CommandFunction<O, L, M, ( Options | O )[]> ) {
-    const promise = ( $this: DSL<O, L, M> ) => {
-      return new Promise<void>( ( resolve, reject ) => {
-        const promises = func( { locals: $this.locals, chat: $this } ).map( p => {
-          return { id: uuid(), command: "prompt", promise: $this._prompt( $this, { ...$this.options, ...p } as O ) };
-        } );
-        const joinIndex = $this.pipeline.slice( $this.pipelineCursor ).map( p => p.command ).indexOf( "join" );
-        if ( joinIndex === -1 ) {
-          reject( "branchForEach requires a join()" );
-          return;
-        }
-        $this.pipeline = [
-          ...$this.pipeline.slice( 0, $this.pipelineCursor + 1 ),
-          ...promises.flatMap( p => [ p, ...$this.pipeline.slice( $this.pipelineCursor + 1, joinIndex + $this.pipelineCursor ) ] ),
-          ...$this.pipeline.slice( joinIndex + $this.pipelineCursor + 1 )
-        ];
-        resolve();
-      } );
-    };
-    this.pipeline.push( { id: uuid(), command: "branchForEach", promise } );
-    return this;
-  }
-
-  /**
-   * establishes a stopping point for the `branchForEach`
-   * @returns {object} - the chat object   
-   */
-  join() {
-    // see forEachBranch
-    this.pipeline.push( { id: uuid(), command: "join", promise: ( $this: DSL<O, L, M> ) => new Promise<void>( ( resolve ) => resolve() ) } );
-    return this;
-  }
-
   /***
-   * 
+   * evaluates the Chunk across all stream handlers
    */
   private out( chunk: Chunk ) {
     this.streamHandlers.forEach( handler => handler( chunk ) );
-  }
-
-  /**
-   * a handler to receive the stream of text
-   * 
-   * @param output 
-   * @returns 
-   */
-  async stream( handler: StreamHandler, ...others: StreamHandler[] ) {
-    this.streamHandlers = [ handler, ...others ];
-    return this.execute();
-  }
-
-  /**
-   * executes the pipeline
-   * 
-   * @returns {Promise}
-   */
-  async execute() {
-    return new Promise<DSL<O, L, M>>( async ( resolve, reject ) => {
-      // todo validate the commands e.g. a branchForEach as a join
-      try {
-        let hasNext = true;
-        this.out( { type: this.type, id: this.data.id!, state: "open" } );
-        while ( hasNext ) {
-          this.pipelineCursor += 1;
-          const stage = this.pipeline[ this.pipelineCursor ];
-          if ( stage === undefined ) break;
-          const { promise, command, id } = stage;
-          const slice = this.pipeline.slice( 0, this.pipelineCursor );
-          let stackCount = 0;
-          for ( var i = slice.length - 1; i >= 0; i-- ) {
-            const { id: _id } = slice[ i ];
-            if ( id !== _id ) break;
-            stackCount += 1;
-          }
-          if ( stackCount >= this.settings.maxCallStack ) {
-            reject( `Max Call Stack Exceeded - Stage ${ command }: ${ id } - chat: ${ this.data.id }` );
-            break;
-          }
-          this.out( { id: stage.id, type: "command", content: `command: ${ command }\n` } );
-          await promise( this );
-        }
-        const totalTokens = this.data.messages.reduce( ( prev, curr ) => {
-          return prev + curr.size;
-        }, 0 );
-        this.data.size = totalTokens;
-        resolve( this );
-      } catch ( error ) {
-        this.out( { type: "error", error } );
-        reject( error );
-      } finally {
-        this.out( { type: this.type, id: this.data.id!, state: "closed" } );
-      }
-    } );
   }
 }

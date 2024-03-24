@@ -1,6 +1,8 @@
-export { Chat, CodeBlock, Message, Visibility } from "./Chat";
+export { Chat, CodeBlock, Message } from "./Chat";
 export { toCodeBlock } from "./CodeBlocks";
-export { DSL, ExpectHandler, Function, FunctionResponse, LLM, Options, Prompt, Stream, TextResponse } from "./DSL";
-export { json } from "./Expect";
-export * as FileSystem from "./FileSystem";
+export { DSL, Locals, Metadata, Options, Settings } from "./DSL";
+export { ResponseStage, ResponseStageArgs, json } from "./Expect";
+export * as LLM from "./LLM";
 export { CODE_BLOCK_RULE, Rule } from "./Rules";
+export { StreamHandler, localFileStorage, localFileStream } from "./Stream";
+export { Visibility, Window, latest, main } from "./Window";

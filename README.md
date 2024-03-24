@@ -1,10 +1,5 @@
 # todo's
-align the CommandFunction arguments as a spreadable object
-update functions to resolve a string and set the role / visibility to System
-have a stop call which resolves to then
-have a condition series like branch
-branch into sidebars for concurrent processing?
-load a module of functions to add to the chat
+// https://stackoverflow.com/questions/77168202/calculating-total-tokens-for-api-request-to-chatgpt-including-functions
 
 # @k-apps.io/llm-dsl
 this is a DSL for interacting with a LLM, chaining commands together to formulate robust tasks

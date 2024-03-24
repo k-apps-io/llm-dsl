@@ -1,10 +1,9 @@
 import { ChatGPT, Options } from "@k-apps-io/llm-dsl-chatgpt";
-import { Message, Visibility } from "../../src/Chat";
-import extract, { toCodeBlock } from "../../src/CodeBlocks";
+import { Message } from "../../src/Chat";
+import { extract, toCodeBlock } from "../../src/CodeBlocks";
 import { DSL } from "../../src/DSL";
 import { json } from "../../src/Expect";
-import { latest } from "../../src/Window";
-
+import { Visibility, latest } from "../../src/Window";
 
 describe( ".expect", () => {
 
@@ -30,8 +29,7 @@ describe( ".expect", () => {
       size: 0,
       codeBlocks: extract( content ),
       visibility: Visibility.OPTIONAL,
-      createdAt: new Date(),
-      updatedAt: new Date()
+      createdAt: new Date()
     };
     const res = await handler( { response, locals: $chat.locals, chat: $chat } );
     const blocks = $chat.locals.$blocks;

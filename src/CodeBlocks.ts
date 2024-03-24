@@ -29,10 +29,7 @@ export const extract = ( text: string ): CodeBlock[] => {
   return blocks;
 };
 
-
 export const toCodeBlock = ( lang: string, value: any ) => {
   if ( lang.toLowerCase() === "json" && typeof value === "object" ) value = JSON.stringify( value, null, 2 );
   return `\`\`\`${ lang }\n${ value }\`\`\`\n`;
 };
-
-export default extract;

@@ -52,7 +52,7 @@ export interface Options {
  * 
  */
 export interface Locals {
-  [ key: string ]: unknown;
+  [ key: string ]: any;
 }
 
 export interface Settings {

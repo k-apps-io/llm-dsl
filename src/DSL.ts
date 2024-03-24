@@ -518,6 +518,19 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
   }
 
   /**
+   * 
+   */
+  pause( func: StageFunction<O, L, M, Options | O>, id: string = uuid() ) {
+    const promise = ( $this: DSL<O, L, M> ) => {
+      return new Promise<void>( ( resolve, reject ) => {
+        func( { locals: $this.locals, chat: $this } );
+        resolve();
+      } );
+    };
+    this.pipeline.push( { id: id, stage: "pause", promise } );
+  }
+
+  /**
    * sets the position of the pipeline to the stage with the provided id. If a id matches the stage will be executed
    * next and continue from that position. If a stage is not found a error is thrown.
    */

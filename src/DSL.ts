@@ -317,13 +317,12 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
    * @param {string} id - a chat uuid 
    * @returns {object} - the chat object   
    */
-  load( func: () => Chat<M> | Promise<Chat<M>>, id: string = uuid() ) {
+  load( func: Chat<M> | Promise<Chat<M>>, id: string = uuid() ) {
     const promise = ( $this: DSL<O, L, M> ) => new Promise<void>( async ( resolve, reject ) => {
-      const result = func();
-      if ( result instanceof Promise ) {
-        $this.data = await result;
+      if ( func instanceof Promise ) {
+        $this.data = await func;
       } else {
-        $this.data = result;
+        $this.data = func;
       }
     } );
     this.pipeline.push( { id: id, stage: "load", promise } );

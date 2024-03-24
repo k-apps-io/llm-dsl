@@ -38,8 +38,8 @@ interface ExpectJSON {
  * this expects that a response includes json codeBlocks. Each codeBlock will be evaluated into a usuable JSON object which will be 
  * made accessible in the chat locals as $blocks.
  */
-export const json = <O extends Options, L extends Locals & { $blocks: JSONValue; }, M extends Metadata>( { blocks, errorPrompt, exact }: ExpectJSON = { blocks: 1, exact: true } ): ResponseStage<O, L, M> => {
-  const handler: ResponseStage<O, L, M> = ( { response, chat } ) => {
+export const json = ( { blocks, errorPrompt, exact }: ExpectJSON = { blocks: 1, exact: true } ): ResponseStage<any, any, any> => {
+  const handler: ResponseStage<any, any, any> = ( { response, chat } ) => {
     return new Promise( ( resolve, expect ) => {
       if ( response.codeBlocks === undefined ) {
         expect( errorPrompt || "1 or more json code blocks were expected in the response e.g. ```json /** ... */```" );

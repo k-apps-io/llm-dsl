@@ -53,6 +53,25 @@ export type Chunk = ChatChunk | ResponseChunk | MessageChunk | StageChunk | Erro
 
 export type StreamHandler = ( chunk: Chunk ) => void;
 
+export const stdout = (): StreamHandler => {
+  let id: string | undefined = undefined;
+  const handler: StreamHandler = ( chunk ) => {
+    // skip these
+    if ( chunk.type === "chat" || chunk.type === "sidebar" || chunk.type === "stage" ) return;
+
+    // write a message if it's not associated with a response
+    if ( ( chunk.type === "message" && chunk.id !== id ) ) process.stdout.write( chunk.content );
+    if ( ( chunk.type === "response" ) ) process.stdout.write( chunk.content );
+    if ( chunk.type === "error" ) process.stderr.write( String( chunk.error ) );
+
+    if ( id === undefined || chunk.id !== id ) {
+      process.stdout.write( "\n" );
+      id = chunk.id;
+    }
+  };
+  return handler;
+};
+
 interface FileSystemOptions {
   /**
    * the directory to write the file to, the directory will not be created if it does not already exist.

@@ -8,18 +8,15 @@ import { Visibility, latest } from "../../src/Window";
 describe( ".expect", () => {
 
   const chat = new DSL<Options, any, undefined>( {
-    llm: new ChatGPT( {}, "gpt-3.5-turbo" ),
-    options: {
-      model: "gpt-3.5-turbo"
-    },
+    llm: new ChatGPT( { model: "gpt-3.5-turbo" } ),
     settings: {
       maxCallStack: 3
     },
-    window: latest( { max: 10 } )
+    window: latest( { n: 10 } )
   } );
 
   it( '1 block', async () => {
-    const handler = json<Options, any, undefined>( { blocks: 1 } );
+    const handler = json( { blocks: 1 } );
     const $chat = chat.clone();
     const content = `${ toCodeBlock( "json", { "key": 1 } ) }`;
     const response: Message = {
@@ -29,7 +26,8 @@ describe( ".expect", () => {
       size: 0,
       codeBlocks: extract( content ),
       visibility: Visibility.OPTIONAL,
-      createdAt: new Date()
+      createdAt: new Date(),
+      prompt: "test"
     };
     const res = await handler( { response, locals: $chat.locals, chat: $chat } );
     const blocks = $chat.locals.$blocks;

@@ -8,12 +8,7 @@ interface L extends Locals {
 }
 
 const chat = new DSL<Options, L, undefined>( {
-  llm: new ChatGPT( {
-    timeout: 10000
-  }, "gpt-3.5-turbo" ),
-  options: {
-    model: "gpt-3.5-turbo",
-  }
+  llm: new ChatGPT( { model: "gpt-3.5-turbo" } )
 } );
 chat
   .setUser( "1234" )
@@ -25,7 +20,7 @@ chat
       type: "object",
       properties: {}
     },
-    func: () => new Promise<Options>( ( resolve, reject ) => resolve( { message: "success", model: "gpt-3.5-turbo" } ) )
+    func: () => new Promise<Options>( ( resolve, reject ) => resolve( { message: "success" } ) )
   } )
   .setLocals( {
     key: uuid()

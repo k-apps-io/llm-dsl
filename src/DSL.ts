@@ -56,12 +56,12 @@ export interface Locals {
 }
 
 export interface Settings {
-  contextWindowSize: number;
+  windowSize: number;
   minResponseSize: number;
   maxCallStack: number;
 }
 const DEFAULT_SETTINGS: Settings = {
-  contextWindowSize: 4000,
+  windowSize: 4000,
   minResponseSize: 400,
   maxCallStack: 10,
 };
@@ -110,7 +110,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
     locals?: L;
     metadata?: M;
     settings?: {
-      contextWindowSize?: number;
+      windowSize?: number;
       minResponseSize?: number;
       maxCallStack?: number;
     };
@@ -217,7 +217,8 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
         visibility: visibility,
         createdAt: new Date(),
         window: [],
-        user: $this.user
+        user: $this.user,
+        prompt: messageId,
       };
       $this.data.messages.push( message );
       $this.out( { ...message, chat: $this.data.id!, type: "message" } );
@@ -370,7 +371,8 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
             content: content,
             size: $this.llm.tokens( content ) + 3,
             visibility: Visibility.REQUIRED,
-            createdAt: new Date()
+            createdAt: new Date(),
+            prompt: ruleId
           } );
           $this.rules.push( ruleId );
         }
@@ -438,8 +440,8 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
                     ...$this.options,
                     role: "system",
                     visibility: Visibility.SYSTEM,
-                    message: `the prior response did not meet expectations: ${ expectation }`,
-                    responseSize: Math.floor( $this.settings.contextWindowSize * 0.25 )
+                    message: expectation,
+                    responseSize: Math.floor( $this.settings.windowSize * 1.25 )
                   } as O
                   )
                 },
@@ -546,8 +548,9 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
    * @param options : the prompt options
    * @returns Promise<void>
    */
-  private _prompt( $chat: DSL<O, L, M>, options: O ) {
+  private _prompt( $chat: DSL<O, L, M>, options: O, prompt?: string ) {
     return () => new Promise<void>( async ( resolve, reject ) => {
+      // token calculation is based off https://stackoverflow.com/questions/77168202/calculating-total-tokens-for-api-request-to-chatgpt-including-functions
       const messageTokens = $chat.llm.tokens( options.message ) + 3;
       const responseSize = ( options.responseSize || $chat.settings.minResponseSize );
       const functions = Object.keys( $chat.functions ).map( k => $chat.functions[ k ] );
@@ -575,20 +578,22 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
           return tokenCount;
         } ).reduce( ( total, curr ) => total + curr, 0 );
 
-      const limit = $chat.settings.contextWindowSize - responseSize - messageTokens - functionTokens;
-      const messages = $chat.window( { messages: $chat.data.messages, tokenLimit: limit } );
+      const limit = $chat.settings.windowSize - responseSize - messageTokens - functionTokens;
+      const messages = $chat.window( { messages: $chat.data.messages, tokenLimit: limit, key: options.key } );
       const messageId = uuid();
       const visibility = options.visibility !== undefined ? options.visibility : Visibility.OPTIONAL;
       const role = options.role || $chat.options.role || "user";
       const message: Message = {
         id: messageId,
+        key: options.key,
         role: role,
         content: options.message.replaceAll( /\n\s+(\w)/gmi, '\n$1' ).trim(),
         size: messageTokens,
         visibility: visibility,
         window: messages.map( ( { id } ) => id! ),
         user: $chat.user,
-        createdAt: new Date()
+        createdAt: new Date(),
+        prompt: prompt || messageId
       };
       $chat.data.messages.push( message );
       $chat.out( { ...message, type: "message", chat: $chat.data.id! } );
@@ -618,8 +623,9 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
                 role: "assistant",
                 content: content,
                 size: functionSize,
-                visibility: Visibility.SYSTEM,
-                createdAt: new Date()
+                visibility: options.visibility !== undefined ? options.visibility : Visibility.SYSTEM,
+                createdAt: new Date(),
+                prompt: prompt || messageId
               };
               $chat.data.messages.push( functionMessage );
               $chat.out( {
@@ -639,7 +645,8 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
                     role: "assistant",
                     content: response,
                     chat: $chat.data.id!,
-                    visibility: visibility
+                    visibility: visibility,
+                    prompt: prompt || messageId
                   } );
                 }
                 buffer = false;
@@ -660,8 +667,9 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
                   role: "assistant",
                   content: response,
                   size: $chat.llm.tokens( response ) + 3,
-                  visibility: Visibility.SYSTEM,
-                  createdAt: new Date()
+                  visibility: options.visibility !== undefined ? options.visibility : Visibility.SYSTEM,
+                  createdAt: new Date(),
+                  prompt: prompt || messageId
                 };
                 $chat.data.messages.push( functionMessage );
                 $chat.out( { ...functionMessage, chat: $chat.data.id!, type: "message" } );
@@ -675,7 +683,8 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
                 role: "assistant",
                 content: chunk.content,
                 chat: $chat.data.id!,
-                visibility: visibility
+                visibility: visibility,
+                prompt: prompt || messageId
               } );
             }
           }
@@ -695,7 +704,8 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
           size: responseSize,
           visibility: visibility,
           codeBlocks: blocks.length > 0 ? blocks : undefined,
-          createdAt: new Date()
+          createdAt: new Date(),
+          prompt: prompt || messageId
         };
         $chat.data.messages.push( responseMessage );
         $chat.out( { ...responseMessage, type: "message", chat: $chat.data.id! } );
@@ -721,17 +731,18 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
         } catch ( error ) {
           $chat.out( { id: uuid(), type: "error", error } );
         }
-        let prompt: O | Options;
+        let result: O | Options;
         try {
-          prompt = await promise( { ...params, locals: $chat.locals, chat: $chat } );
-          prompt.message = `here is the result of your call ${ name }(): ${ prompt.message.replaceAll( /\n\s+(\w)/gmi, '\n$1' ).trim() }`;
+          result = await promise( { ...params, locals: $chat.locals, chat: $chat } );
+          result.message = `here is the result of your call ${ name }(): ${ result.message.replaceAll( /\n\s+(\w)/gmi, '\n$1' ).trim() }`;
         } catch ( error ) {
-          prompt = {
+          result = {
             message: `an error occurred in call ${ name }(): ${ error }`
           };
         }
-        prompt.role = "system";
-        const stage = { id: uuid(), stage: name, promise: $chat._prompt( $chat, { ...$chat.options, ...prompt } as O ) };
+        result.role = "system";
+        result.visibility = options.visibility !== undefined ? options.visibility : Visibility.SYSTEM;
+        const stage = { id: uuid(), stage: name, promise: $chat._prompt( $chat, { ...$chat.options, ...result } as O, prompt || messageId ) };
         if ( $chat.pipelineCursor === $chat.pipeline.length ) {
           // end of the chat, just need to push the new stage
           $chat.pipeline.push( stage );

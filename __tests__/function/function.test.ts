@@ -6,11 +6,8 @@ interface ChatLocals extends Locals {
 }
 const chat = new DSL<Options, ChatLocals, undefined>( {
   llm: new ChatGPT( {
-    timeout: 10000
-  }, "gpt-3.5-turbo" ),
-  options: {
     model: "gpt-3.5-turbo",
-  },
+  } ),
   locals: {
     wasCalled: false
   }

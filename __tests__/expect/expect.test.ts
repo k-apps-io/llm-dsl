@@ -8,10 +8,7 @@ import { localFileStorage, localFileStream } from "../../src/Stream";
 describe( ".expect", () => {
   it( 'expectJSON', async () => {
     const chat = new DSL<Options, any, undefined>( {
-      llm: new ChatGPT( {}, "gpt-3.5-turbo" ),
-      options: {
-        model: "gpt-3.5-turbo"
-      },
+      llm: new ChatGPT( { model: "gpt-3.5-turbo" } ),
       locals: {
         attempts: 0
       }
@@ -39,10 +36,7 @@ describe( ".expect", () => {
 
   it( 'expectCallstackExceeded', async () => {
     const chat = new DSL<Options, any, undefined>( {
-      llm: new ChatGPT( {}, "gpt-3.5-turbo" ),
-      options: {
-        model: "gpt-3.5-turbo"
-      },
+      llm: new ChatGPT( { model: "gpt-3.5-turbo" } ),
       settings: {
         maxCallStack: 3
       }

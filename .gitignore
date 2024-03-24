@@ -5,3 +5,4 @@ Scratch*
 chats/*
 __tests__/**/**.json
 *.log
+dist/*

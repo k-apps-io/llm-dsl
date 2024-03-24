@@ -8,11 +8,9 @@ interface L extends Locals {
 
 const chat = new DSL<Options, L, undefined>( {
   llm: new ChatGPT( {
-    timeout: 10000
-  }, "gpt-3.5-turbo" ),
-  options: {
-    model: "gpt-3.5-turbo",
-  }
+    timeout: 10000,
+    model: "gpt-3.5-turbo"
+  } )
 } );
 describe( "pipeline.move", () => {
   it( "forward 1", async () => {

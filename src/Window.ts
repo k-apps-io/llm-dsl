@@ -23,24 +23,25 @@ export enum Visibility {
 interface WindowOptions {
   messages: Chat<any>[ "messages" ];
   tokenLimit: number;
+  key?: string;
 }
 export type Window = ( options: WindowOptions ) => Chat<any>[ "messages" ];
 
 interface LatestWindowOptions {
   /**
-   * the number of messages to include in the window starting from the end of the message
+   * the maximum number of messages to include in the window starting from the end of the message
    * history
    */
-  max: number;
+  n: number;
 }
 /**
  * A Window strategy that will include the latest messages in the Window up to the defined amount. This does
  * not consider the token limit, keys or visibility.
  */
-export const latest = ( { max }: LatestWindowOptions ): Window => {
+export const latest = ( { n }: LatestWindowOptions ): Window => {
   const reduce: Window = ( { messages }: WindowOptions ) => {
-    if ( max <= 0 ) throw `max must greater than 0, received ${ max }`;
-    return messages.slice( -max );
+    if ( n <= 0 ) throw `max must greater than 0, received ${ n }`;
+    return messages.slice( -n );
   };
   return reduce;
 };
@@ -54,18 +55,25 @@ export const latest = ( { max }: LatestWindowOptions ): Window => {
  * All but EXCLUDED messages are then evaluated to fill the window up to the token limit. These messages
  * are evaluted in descending order and will maintain relative positioning. 
  */
-export const main: Window = ( { messages, tokenLimit } ) => {
+export const main: Window = ( { messages, tokenLimit, key } ) => {
   const _messages: Chat<any>[ "messages" ] = messages
     // reduce to the latest keys
-    .reduce( ( prev, curr ) => {
+    .reduce( ( prev, curr, index ) => {
       if ( curr.key !== undefined ) {
-        const prevIndex = prev.map( p => p.key ).indexOf( curr.key );
-        // remove the preivous key
-        if ( prevIndex > -1 ) prev.splice( prevIndex, 1 );
+        const prevIndex = prev.findIndex( ( p, i ) => p.key === curr.key && p.id !== curr.id && i < index );
+        const keyMatchesTarget = key && curr.key === key;
+        let targetId: string | undefined = undefined;
+        if ( prevIndex > -1 ) {
+          // previous message in the history shares the current key
+          targetId = prev[ prevIndex ].id;
+        } else if ( keyMatchesTarget ) {
+          // the current message shares targeted key
+          targetId = curr.id;
+        }
+        if ( targetId ) prev = prev.filter( p => p.prompt !== targetId );
       }
-      prev.push( curr );
       return prev;
-    }, [] as Chat<any>[ "messages" ] )
+    }, messages as Chat<any>[ "messages" ] )
     ;
   // identify the required messages and their position
   const required = _messages

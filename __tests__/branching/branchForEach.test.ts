@@ -7,10 +7,7 @@ interface ChatLocals extends Locals {
   colors: string[];
 }
 const chat = new DSL<Options, ChatLocals, undefined>( {
-  llm: new ChatGPT( {}, "gpt-3.5-turbo" ),
-  options: {
-    model: "gpt-3.5-turbo"
-  },
+  llm: new ChatGPT( { model: "gpt-3.5-turbo" } ),
   settings: {
     maxCallStack: 3
   }

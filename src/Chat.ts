@@ -84,6 +84,11 @@ export interface Message {
    * @type {string[]}
    */
   window?: string[];
+
+  /**
+   * the id of the prompt that generated this message
+   */
+  prompt: string;
 }
 
 /**

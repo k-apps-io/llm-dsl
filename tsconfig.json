@@ -102,7 +102,6 @@
     "./src/**/*.ts"
   ],
   "exclude": [
-    "node_modules",
-    "./src/llm/*.ts"
+    "node_modules"
   ]
 }

@@ -22,11 +22,14 @@ const collect = ( token: IToken ): CodeBlock[] => {
   } );
 };
 
-const extract = ( text: string ): CodeBlock[] => {
+export const extract = ( text: string ): CodeBlock[] => {
   const token = parser.getAST( text );
   if ( token === null ) return [];
   const blocks = collect( token );
   return blocks;
 };
 
-export default extract;
+export const toCodeBlock = ( lang: string, value: any ) => {
+  if ( lang.toLowerCase() === "json" && typeof value === "object" ) value = JSON.stringify( value, null, 2 );
+  return `\`\`\`${ lang }\n${ value }\`\`\`\n`;
+};

@@ -1,12 +1,7 @@
-/** 
- * An enum representing the different visibility statuses a message can hold.
- * @enum {number}
- */
-export enum Visibility {
-  HIDDEN,
-  OPTIONAL,
-  REQUIRED
-}
+
+
+import { Metadata } from "./DSL";
+import { Visibility } from "./Window";
 
 /**
  * Interface representing a code block.
@@ -35,13 +30,13 @@ export interface Message {
    * Unique identifier of the message (optional).
    * @type {string}
    */
-  id?: string;
+  id: string;
 
-  /**
-   * The role authoring the message.
-   * @type {"user" | "assistant"}
+  /** 
+      * The role authoring the message.
+   * @type {"user" | "assistant" | "system"}
    */
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "system";
 
   /**
    * The key of the message (optional).
@@ -55,11 +50,10 @@ export interface Message {
    */
   content: string;
 
-  /** 
-   * The number of tokens in the message.
-   * @type {number}
+  /**
+   * The token size of the message
    */
-  tokens: number;
+  size: number;
 
   /**
    * The visibility status of the message.
@@ -86,34 +80,27 @@ export interface Message {
   createdAt: Date;
 
   /**
-   * The time the message was updated.
-   * @type {Date}
-   */
-  updatedAt: Date;
-
-  /**
-   * A list of messages that were included in a prompt (optional).
+   * A list of message ids that represent the context window included with a prompt to the llm (optional).
    * @type {string[]}
    */
-  included?: string[];
+  window?: string[];
+
+  /**
+   * the id of the prompt that generated this message
+   */
+  prompt: string;
 }
 
 /**
  * Interface representing a chat.
  * @interface
  */
-export interface Chat {
+export interface Chat<M extends Metadata> {
   /** 
    * Unique identifier of the chat (optional).
    * @type {string}
    */
   id?: string;
-
-  /**
-   * The name of the chat.
-   * @type {string}
-   */
-  name: string;
 
   /**
    * Contains the sidebar ids spawned by the chat.
@@ -135,5 +122,10 @@ export interface Chat {
   /**
    * optional metadata to associate with the chat
    */
-  metadata?: { [ key: string ]: any; };
+  metadata?: M;
+
+  /**
+   * 
+   */
+  size: number;
 }

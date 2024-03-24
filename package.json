@@ -1,12 +1,13 @@
 {
-  "name": "@k-apps.io/llm-dsl",
-  "version": "1.0.12",
+  "name": "@k-apps-io/llm-dsl",
+  "version": "2.0.1",
   "description": "a DSL for Large Language Models (LLM)",
   "main": "dist/index.js",
   "scripts": {
     "test": "jest",
     "build": "tsc",
-    "deploy": "npm run build && npm publish --access public"
+    "deploy-prod": "npm run build && npm publish --access public",
+    "beta": "npm run build && git add . && git commit -m \"Committing changes before beta deploy\" && npm version prerelease --preid=beta && npm publish --tag beta --registry https://npm.pkg.github.com"
   },
   "repository": {
     "type": "git",
@@ -24,13 +25,13 @@
   },
   "homepage": "https://github.com/k-apps-io/llm-dsl#readme",
   "devDependencies": {
-    "@k-apps.io/llm-dsl-chatgpt": "^1.0.7",
+    "@k-apps.io/llm-dsl-chatgpt": "^1.2.1-beta.0",
     "@types/jest": "^29.5.1",
     "@types/lodash": "^4.14.200",
     "@types/uuid": "^9.0.6",
     "dotenv": "^16.3.1",
     "jest": "^29.5.0",
-    "openai": "^4.14.2",
+    "openai": "^4.29.2",
     "tiktoken": "^1.0.10",
     "ts-jest": "^29.1.0",
     "ts-node": "^10.9.1",
@@ -38,6 +39,7 @@
   },
   "dependencies": {
     "ebnf": "^1.9.1",
+    "json5": "^2.2.3",
     "lodash": "^4.17.21",
     "uuid": "^9.0.1"
   },

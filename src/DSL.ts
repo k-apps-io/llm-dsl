@@ -550,13 +550,14 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
           return prev + curr.size;
         }, 0 );
         this.data.size = totalTokens;
+        await this.storage.save( this );
         resolve( this );
       } catch ( error ) {
         this.out( { id: uuid(), type: "error", error } );
+        await this.storage.save( this );
         reject( error );
       } finally {
         this.out( { type: this.type, id: this.data.id!, state: "closed" } );
-        await this.storage.save( this );
       }
     } );
   }

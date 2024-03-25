@@ -255,6 +255,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
         visibility: visibility,
         createdAt: new Date(),
         window: [],
+        windowSize: 0,
         user: $this.user,
         prompt: messageId,
       };
@@ -524,6 +525,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
    */
   async execute() {
     return new Promise<DSL<O, L, M>>( async ( resolve, reject ) => {
+      let error: any = undefined;
       try {
         let hasNext = true;
         this.out( { type: this.type, id: this.data.id!, state: "open" } );
@@ -549,10 +551,9 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
           this.out( { id: id, type: "stage", content: stage } );
           await promise( this );
         }
-        resolve( this );
-      } catch ( error ) {
-        this.out( { id: uuid(), type: "error", error } );
-        reject( error );
+      } catch ( e ) {
+        this.out( { id: uuid(), type: "error", error: e } );
+        error = e;
       } finally {
         this.out( { type: this.type, id: this.data.id!, state: "closed" } );
         const totalTokens = this.data.messages.reduce( ( prev, curr ) => {
@@ -566,6 +567,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
         this.data.inputTokens = totalTokens.input;
         this.data.outputTokens = totalTokens.output;
         await this.storage.save( this );
+        error ? reject( error ) : resolve( this );
       }
     } );
   }

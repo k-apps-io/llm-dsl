@@ -372,6 +372,15 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
   }
 
   /**
+   * save the chat to storage
+   * 
+   * @returns {Promise}
+   */
+  save() {
+    return this.storage.save( this );
+  }
+
+  /**
    * create a clone of the chat pipeline with unique ids and as new object in memory
    * 
    * @returns a clone of the chat object
@@ -547,6 +556,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
         reject( error );
       } finally {
         this.out( { type: this.type, id: this.data.id!, state: "closed" } );
+        await this.storage.save( this );
       }
     } );
   }

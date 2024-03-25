@@ -1,13 +1,14 @@
 import { readFile, writeFile } from "fs";
 import { promisify } from "util";
 import { Chat } from "./Chat";
+import { DSL } from "./DSL";
 
 const write = promisify( writeFile );
 const read = promisify( readFile );
 
 export interface ChatStorage extends Object {
   getById: ( id: string ) => Chat<any> | Promise<Chat<any>>;
-  save: ( chat: Chat<any> ) => Promise<void>;
+  save: ( chat: DSL<any, any, any> ) => Promise<void>;
 }
 
 interface LocalStorageOptions {
@@ -25,9 +26,9 @@ export const LocalStorage = ( { directory }: LocalStorageOptions ): ChatStorage 
           .catch( reject );
       } );
     },
-    save: ( chat: Chat<any> ): Promise<void> => {
+    save: ( chat: DSL<any, any, any> ): Promise<void> => {
       return new Promise<void>( ( resolve, reject ) => {
-        write( `${ directory }/${ chat.id }.json`, JSON.stringify( chat, null, 4 ) )
+        write( `${ directory }/${ chat.data.id }.json`, JSON.stringify( chat.data, null, 2 ) )
           .then( resolve )
           .catch( reject );
       } );
@@ -40,7 +41,7 @@ export const NoStorage: ChatStorage = {
   getById: function ( id: string ): Promise<Chat<any>> {
     throw 'Not Implemented - Choose an alternative storage engine';
   },
-  save: function ( chat: Chat<any> ): Promise<void> {
+  save: function ( chat: DSL<any, any, any> ): Promise<void> {
     return new Promise<void>( ( resolve, reject ) => resolve() );
   }
 };

@@ -476,11 +476,10 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
           const response = $this.data.messages[ $this.data.messages.length - 1 ];
           try {
             await handler( { response: response, locals: $this.locals, chat: $this } );
-            resolve();
           } catch ( expectation ) {
             if ( typeof expectation !== "string" ) {
               reject( expectation );
-              return;
+              break;
             }
             // an expecatation was thrown
             // push an dispute prompt as the next stage
@@ -500,8 +499,10 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
               },
               ...$this.pipeline.slice( $this.pipelineCursor )
             ];
+            break;
           }
         };
+        resolve();
       } );
     };
     this.pipeline.push( { id: stageId, stage: "expect", promise } );

@@ -732,7 +732,8 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
               }
             } else if ( isFunction ) {
               response += chunk.content.trim();
-              const match = response.match( /call:\s?(\w+?)\((.+?)\)/gi );
+              const functionNames = Object.keys( $chat.functions );
+              const match = response.match( new RegExp( `(${ functionNames.join( "|" ) })\((.+?)\)`, "gi" ) );
               if ( match ) {
                 const name = match[ 1 ];
                 const args = match[ 2 ];

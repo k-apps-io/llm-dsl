@@ -49,12 +49,6 @@ export interface Message {
    * @type {string}
    */
   content: string;
-
-  /**
-   * The token size of the message
-   */
-  size: number;
-
   /**
    * The visibility status of the message.
    * @type {Visibility}
@@ -80,13 +74,31 @@ export interface Message {
   createdAt: Date;
 
   /**
-   * A list of message ids that represent the context window included with a prompt to the llm (optional).
+   * A list of message ids that represent the context window included with a prompt to the llm (optional). This will be set
+   * any time a prompt is sent to the LLM. This include's all prompt functions on the DSL in addition to function calls made
+   * by the LLM which generates a prompt.
+   * 
    * @type {string[]}
    */
   window?: string[];
 
   /**
-   * the id of the prompt that generated this message
+   * this is a calculated value and is the total size of all messages within the window sent to the prompt. 
+   * @type {number}
+   */
+  windowSize?: number;
+
+  /**
+   * The number of tokens in content.
+   * @type {number}
+   */
+  size: number;
+
+
+  /**
+   * the id of a message in the chat that resulted in this additional message. For example, a simple prompt generates 2 messages in
+   * the chat. One that represents the prompt, the other represents the response. Both messages will have prompt set to the prompt 
+   * message id.
    */
   prompt: string;
 }

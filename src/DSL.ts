@@ -608,6 +608,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
         size: messageTokens,
         visibility: visibility,
         window: messages.map( ( { id } ) => id! ),
+        windowSize: messages.reduce( ( total, curr ) => total + curr.size, 0 ),
         user: $chat.user,
         createdAt: new Date(),
         prompt: prompt || messageId
@@ -751,10 +752,10 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
         let result: O | Options;
         try {
           result = await promise( { ...params, locals: $chat.locals, chat: $chat } );
-          result.message = `here is the result of your call ${ name }(): ${ result.message.replaceAll( /\n\s+(\w)/gmi, '\n$1' ).trim() }`;
+          result.message = `call ${ name }() -> ${ result.message.replaceAll( /\n\s+(\w)/gmi, '\n$1' ).trim() }`;
         } catch ( error ) {
           result = {
-            message: `an error occurred in call ${ name }(): ${ error }`
+            message: `call ${ name }() -> ${ error }`
           };
         }
         result.role = "system";

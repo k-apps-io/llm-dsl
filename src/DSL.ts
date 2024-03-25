@@ -130,8 +130,8 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
       messages: [],
       sidebars: [],
       metadata: metadata,
-      inputTokens: 0,
-      outputTokens: 0
+      inputs: 0,
+      outputs: 0
     };
   }
 
@@ -558,14 +558,14 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
         this.out( { type: this.type, id: this.data.id!, state: "closed" } );
         const totalTokens = this.data.messages.reduce( ( prev, curr ) => {
           if ( curr.windowSize ) {
-            prev.input += curr.size + curr.windowSize;
+            prev.inputs += curr.size + curr.windowSize;
           } else {
-            prev.output += curr.size;
+            prev.outputs += curr.size;
           }
           return prev;
-        }, { input: 0, output: 0 } as { input: number, output: number; } );
-        this.data.inputTokens = totalTokens.input;
-        this.data.outputTokens = totalTokens.output;
+        }, { inputs: 0, outputs: 0 } );
+        this.data.inputs = totalTokens.inputs;
+        this.data.outputs = totalTokens.outputs;
         await this.storage.save( this );
         error ? reject( error ) : resolve( this );
       }

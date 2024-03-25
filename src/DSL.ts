@@ -520,11 +520,15 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
   /**
    * 
    */
-  pause( func: StageFunction<O, L, M, Options | O>, id: string = uuid() ) {
+  pause( func: ( args: { chat: DSL<O, L, M>, locals: L; } ) => ( void | Promise<void> ), id: string = uuid() ) {
     const promise = ( $this: DSL<O, L, M> ) => {
-      return new Promise<void>( ( resolve, reject ) => {
-        func( { locals: $this.locals, chat: $this } );
-        resolve();
+      return new Promise<void>( async ( resolve, reject ) => {
+        const result = func( { locals: $this.locals, chat: $this } );
+        if ( result instanceof Promise ) {
+          result.then( resolve ).catch( reject );
+        } else {
+          resolve();
+        };
       } );
     };
     this.pipeline.push( { id: id, stage: "pause", promise } );

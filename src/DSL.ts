@@ -724,7 +724,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
                     role: "assistant",
                     content: response,
                     chat: $chat.data.id!,
-                    visibility: visibility,
+                    visibility: Visibility.OPTIONAL,
                     prompt: prompt || messageId
                   } );
                 }
@@ -781,7 +781,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
           role: "assistant",
           content: response,
           size: responseSize,
-          visibility: visibility,
+          visibility: Visibility.OPTIONAL,
           codeBlocks: blocks.length > 0 ? blocks : undefined,
           createdAt: new Date(),
           prompt: prompt || messageId

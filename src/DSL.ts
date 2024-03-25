@@ -146,6 +146,8 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
     const sidebar = new DSL<O, L, Metadata & { $parent: string; }>( {
       llm: this.llm,
       options: this.options,
+      storage: this.storage,
+      settings: this.settings,
       metadata: {
         ...( this.data.metadata || {} ),
         $parent: this.data.id!

@@ -523,73 +523,59 @@ const chat = new DSL<Options, Locals, MyMetadata>( {
 ```
 
 # Storage
-chats can be stored for later use; this requires a `storage` mechanism of your choosing. This package provides
-`localFileStorage` which will write the chat to a `json` file once it completes as well as `localFileStream` which will stream the chat realtime to a text file.
+chats can be stored for later use; this requires a `storage` mechanism. This mechanism manages saving and retrieving chats from a data store. This package includes `LocalStorage` which will save the chats to the local file system and `NoStorage` which does not save any chats; `NoStorage` is the **default**. 
+
+## LocalStorage
+this is a simple mechanism that will store and load chats from the local file system.
+
+> the directory will not be created automatically
 
 ```typescript
 import { ChatGPT, Options } from "@k-apps-io/llm-dsl-chatgpt";
-import { DSL, Locals, localFileStorage, localFileStream, stdout } from "@k-apps-io/llm-dsl";
+import { Chat, DSL, Locals, LocalStorage } from "@k-apps-io/llm-dsl";
 
 require( "dotenv" ).config();
 
 const chat = new DSL<Options, Locals, undefined>( {
-  llm: new ChatGPT( { model: "gpt-3.5-turbo" } )
+  llm: new ChatGPT( { model: "gpt-3.5-turbo" } ),
+  storage: LocalStorage({ directory: process.env.CHATS_DIR })
 } );
-chat.prompt( {
-  message: "hello world"
-} )
-  // you can provide many stream handlers such as stdout and localFileStream
-  .stream( stdout(), localFileStream( { directory: __dirname, filename: "hello world" } ) )
-  // similarly, you can write the chat once it's completed
-  .then( $chat => localFileStorage( { directory: __dirname, chat: $chat, filename: "hello world" } ) )
-  .catch( error => {
-    console.error( error );
-  } );
 ```
 
-## resuming / cloning
-an existing chat data can be continued / resumed with `load` or reused with `clone`
 
-```typescript
-import { ChatGPT, Options } from "@k-apps-io/llm-dsl-chatgpt";
-import { Chat, DSL, Locals, localFileStorage } from "@k-apps-io/llm-dsl";
+## Custom
+you can define your own storage mechanism by implementing the `Storage` interface
 
-require( "dotenv" ).config();
+```javascript
+import { ChatStorage } from "@k-apps.io/llm-dsl";
 
-const chat = new DSL<Options, Locals, undefined>( {
-  llm: new ChatGPT( { model: "gpt-3.5-turbo" } )
-} );
+const MyAPI: ChatStorage = {
+  getById: ( id: string ): Promise<Chat> => {
+    return new Promise<Chat>( ( resolve, reject ) => {
+      /**
+       * TODO: retrieve an existing chat
+       */
+      reject();
+    } );
+  },
+  save: ( chat: Chat ): Promise<void> => {
+    return new Promise<void>( ( resolve, reject ) => {
+      /**
+       * TODO: save the chat
+       */
+      reject();
+    } );
+  }
+}
 
-chat
-  // clone a chat which allows the pipeline to be repeatedly executed without conflict between executions (memory and pointer yada yada)
-  .clone()
-  // load in an existing chat
-  .load( ( id ) => new Promise<Chat<any>>( ( resolve, reject ) => {
-    /**
-     * call a storage service like a MongoDB or OracleDB to recall an existing chat
-     */
-  } ) )
-  /**
-   * consider my shot into the green from earlier; continuing afer my birdy put
-   */
-  .prompt( {
-    message: "Moving onto the next whole, it's a short Par 4 with trouble near the green. I'm debating laying up to the largest part of the fairway. I believe i'll have about 165y in if i do. Or i could go for it with a higher risk chip."
-  } )
-  .stream( chunk => {
-    /**
-     * call a storage service to store the chunks as they're produced
-     */
-  } )
-  .then( $chat => {
-    /**
-     * or call the storage service here with the full chat
-     */
-    localFileStorage($chat);
-  } )
-  .catch( error => {
-    console.error( error );
-  } );
+const main = () => {
+  const chat = new DSL({
+    storage: MyAPI,
+    // ...
+  });
+}
 
+main();
 ```
 
 # pipeline

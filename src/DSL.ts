@@ -6,6 +6,7 @@ import { extract } from "./CodeBlocks";
 import { ResponseStage } from "./Expect";
 import { Function, LLM, Prompt } from "./LLM";
 import { Rule } from "./Rules";
+import { ChatStorage, NoStorage } from "./Storage";
 import { Chunk, StreamHandler } from "./Stream";
 import { Visibility, Window, main } from "./Window";
 import { LoopError, detectLoop } from "./utilities";
@@ -73,6 +74,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
   llm: LLM;
   options: Omit<O, "message">;
   window: Window;
+  storage: ChatStorage;
   data: Chat<M>;
   locals: L;
   rules: string[] = [];
@@ -104,11 +106,12 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
    */
   private streamHandlers: StreamHandler[] = [];
 
-  constructor( { llm, options, locals, metadata, settings, window }: {
+  constructor( { llm, options, locals, metadata, settings, window, storage }: {
     llm: LLM;
     options?: Omit<O, "message">;
     locals?: L;
     metadata?: M;
+    storage?: ChatStorage;
     settings?: {
       windowSize?: number;
       minResponseSize?: number;
@@ -121,6 +124,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
     this.locals = locals || {} as L;
     this.settings = { ...DEFAULT_SETTINGS, ...settings };
     this.window = window || main;
+    this.storage = storage || NoStorage;
     this.data = {
       id: uuid(),
       messages: [],
@@ -169,7 +173,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
       if ( $this.data.user === undefined ) $this.data.user = $this.user;
       resolve();
     } );
-    this.pipeline.push( { id: uuid(), stage: "setting user", promise } );
+    this.pipeline.push( { id: uuid(), stage: "user", promise } );
     return this;
   }
 
@@ -179,24 +183,55 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
    * @param value: L
    * @returns DSL
    */
-  setLocals( locals: L ) {
+  setLocals( args: ( L | ( ( args: { chat: DSL<O, L, M>; } ) => L | Promise<L> ) ), id: string = uuid() ) {
     const promise = ( $this: DSL<O, L, M> ) => new Promise<void>( ( resolve, reject ) => {
-      $this.locals = locals;
-      resolve();
+      if ( typeof args === "function" ) {
+        const result = args( { chat: $this } );
+        if ( result instanceof Promise ) {
+          result
+            .then( locals => {
+              $this.locals = { ...$this.locals, ...locals };
+              resolve();
+            } )
+            .catch( reject );
+        } else {
+          $this.locals = { ...$this.locals, ...result };
+          resolve();
+        }
+      } else {
+        $this.locals = { ...$this.locals, ...args };
+        resolve();
+      }
     } );
-    this.pipeline.push( { id: uuid(), stage: "setting locals", promise } );
+    this.pipeline.push( { id: id, stage: "locals", promise } );
     return this;
   }
 
   /**
    * set metadata for the chat
    */
-  setMetadata( metadata: M ) {
+  setMetadata( args: ( M | ( ( _args: { chat: DSL<O, L, M>; } ) => M | Promise<M> ) ), id: string = uuid() ) {
     const promise = ( $this: DSL<O, L, M> ) => new Promise<void>( ( resolve, reject ) => {
-      $this.data.metadata = metadata;
-      resolve();
+      const metadata = $this.data.metadata || {};
+      if ( typeof args === "function" ) {
+        const result = args( { chat: $this } );
+        if ( result instanceof Promise ) {
+          result
+            .then( m => {
+              $this.data.metadata = { ...metadata, ...m };
+              resolve();
+            } )
+            .catch( reject );
+        } else {
+          $this.data.metadata = { ...metadata, ...result };
+          resolve();
+        }
+      } else {
+        $this.data.metadata = { ...metadata, ...args };
+        resolve();
+      }
     } );
-    this.pipeline.push( { id: uuid(), stage: "setting metadata", promise } );
+    this.pipeline.push( { id: id, stage: "metadata", promise } );
     return this;
   }
 
@@ -314,18 +349,25 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
   /**
    * load a chat from storage
    * 
-   * @param {string} id - a chat uuid 
+   * @param {string} id - a chat id 
    * @returns {object} - the chat object   
    */
-  load( func: Chat<M> | Promise<Chat<M>>, id: string = uuid() ) {
+  load( id: string, stageId: string = uuid() ) {
     const promise = ( $this: DSL<O, L, M> ) => new Promise<void>( async ( resolve, reject ) => {
-      if ( func instanceof Promise ) {
-        $this.data = await func;
+      const result = $this.storage.getById( id );
+      if ( result instanceof Promise ) {
+        result
+          .then( data => {
+            $this.data = data;
+            resolve();
+          } )
+          .catch( reject );
       } else {
-        $this.data = func;
+        $this.data = result;
+        resolve();
       }
     } );
-    this.pipeline.push( { id: id, stage: "load", promise } );
+    this.pipeline.push( { id: stageId, stage: "load", promise } );
     return this;
   }
 

@@ -493,8 +493,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
                     ...$this.options,
                     role: "system",
                     visibility: Visibility.SYSTEM,
-                    message: expectation,
-                    responseSize: Math.floor( $this.settings.windowSize * 1.25 )
+                    message: expectation
                   } as O
                   )
                 },

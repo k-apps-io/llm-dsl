@@ -153,7 +153,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
       window: this.window,
     } );
     this.data.sidebars.push( sidebar.data.id! );
-    sidebar.data.user = this.data.user;
+    if ( this.user ) sidebar.setUser( this.user );
     if ( _rules ) sidebar.pipeline = cloneDeep( this.pipeline.filter( p => p.stage === "rule" ) ) as any;
     if ( _functions ) sidebar.functions = this.functions;
     if ( _locals ) sidebar.locals = { ...this.locals };

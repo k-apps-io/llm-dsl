@@ -532,6 +532,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
       } );
     };
     this.pipeline.push( { id: id, stage: "pause", promise } );
+    return this;
   }
 
   /**

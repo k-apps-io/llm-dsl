@@ -468,43 +468,43 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
    * 
    */
   expect( handler: ResponseStage<O, L, M>, ...others: ResponseStage<O, L, M>[] ) {
-    const handlers = [ handler, ...others ];
-    for ( const handler of handlers ) {
-      const stageId = uuid();
-      const promise = ( $this: DSL<O, L, M> ) => {
-        return new Promise<void>( async ( resolve, reject ) => {
+    const stageId = uuid();
+    const promise = ( $this: DSL<O, L, M> ) => {
+      return new Promise<void>( async ( resolve, reject ) => {
+        const handlers = [ handler, ...others ];
+        for ( const handler of handlers ) {
           const response = $this.data.messages[ $this.data.messages.length - 1 ];
-          handler( { response: response, locals: $this.locals, chat: $this } )
-            .then( () => resolve() )
-            .catch( expectation => {
-              if ( typeof expectation !== "string" ) {
-                reject( expectation );
-                return;
-              }
-              // an expecatation was thrown
-              // push an dispute prompt as the next stage
-              // followed by this expect promise again so it can be re-evaluated
-              $this.pipeline = [
-                ...$this.pipeline.slice( 0, $this.pipelineCursor + 1 ),
-                {
-                  id: stageId,
-                  stage: `dispute`,
-                  promise: $this._prompt( $this, {
-                    ...$this.options,
-                    role: "system",
-                    visibility: Visibility.SYSTEM,
-                    message: expectation
-                  } as O
-                  )
-                },
-                ...$this.pipeline.slice( $this.pipelineCursor )
-              ];
-              resolve();
-            } );
-        } );
-      };
-      this.pipeline.push( { id: stageId, stage: "expect", promise } );
-    }
+          try {
+            await handler( { response: response, locals: $this.locals, chat: $this } );
+            resolve();
+          } catch ( expectation ) {
+            if ( typeof expectation !== "string" ) {
+              reject( expectation );
+              return;
+            }
+            // an expecatation was thrown
+            // push an dispute prompt as the next stage
+            // followed by this expect promise again so it can be re-evaluated
+            $this.pipeline = [
+              ...$this.pipeline.slice( 0, $this.pipelineCursor + 1 ),
+              {
+                id: stageId,
+                stage: `dispute`,
+                promise: $this._prompt( $this, {
+                  ...$this.options,
+                  role: "system",
+                  visibility: Visibility.SYSTEM,
+                  message: expectation
+                } as O
+                )
+              },
+              ...$this.pipeline.slice( $this.pipelineCursor )
+            ];
+          }
+        };
+      } );
+    };
+    this.pipeline.push( { id: stageId, stage: "expect", promise } );
     return this;
   }
 

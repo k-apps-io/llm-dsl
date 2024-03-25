@@ -130,7 +130,8 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
       messages: [],
       sidebars: [],
       metadata: metadata,
-      size: 0
+      inputTokens: 0,
+      outputTokens: 0
     };
   }
 
@@ -548,18 +549,23 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
           this.out( { id: id, type: "stage", content: stage } );
           await promise( this );
         }
-        const totalTokens = this.data.messages.reduce( ( prev, curr ) => {
-          return prev + curr.size;
-        }, 0 );
-        this.data.size = totalTokens;
-        await this.storage.save( this );
         resolve( this );
       } catch ( error ) {
         this.out( { id: uuid(), type: "error", error } );
-        await this.storage.save( this );
         reject( error );
       } finally {
         this.out( { type: this.type, id: this.data.id!, state: "closed" } );
+        const totalTokens = this.data.messages.reduce( ( prev, curr ) => {
+          if ( curr.windowSize ) {
+            prev.input += curr.size + curr.windowSize;
+          } else {
+            prev.output += curr.size;
+          }
+          return prev;
+        }, { input: 0, output: 0 } as { input: number, output: number; } );
+        this.data.inputTokens = totalTokens.input;
+        this.data.outputTokens = totalTokens.output;
+        await this.storage.save( this );
       }
     } );
   }

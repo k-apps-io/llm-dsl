@@ -1,12 +1,13 @@
 {
   "name": "@k-apps-io/llm-dsl",
-  "version": "2.0.2-beta.20",
+  "version": "2.0.1",
   "description": "a DSL for Large Language Models (LLM)",
   "main": "dist/index.js",
   "scripts": {
     "test": "jest",
     "build": "tsc",
-    "deploy-prod": "npm run build && npm publish --access public",
+    "deploy-public": "npm run build && npm publish --access public",
+    "deploy-private": "npm run build && npm publish --access public --registry https://npm.pkg.github.com",
     "beta": "npm run build && git add . && git commit -m \"Committing changes before beta deploy\" && npm version prerelease --preid=beta && npm publish --tag beta --registry https://npm.pkg.github.com"
   },
   "repository": {
@@ -25,7 +26,7 @@
   },
   "homepage": "https://github.com/k-apps-io/llm-dsl#readme",
   "devDependencies": {
-    "@k-apps.io/llm-dsl-chatgpt": "^1.2.1-beta.0",
+    "@k-apps-io/llm-dsl-chatgpt": "^2.0.1",
     "@types/jest": "^29.5.1",
     "@types/lodash": "^4.14.200",
     "@types/uuid": "^9.0.6",

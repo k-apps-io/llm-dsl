@@ -1,24 +1,21 @@
-import { ChatGPT, Options } from "@k-apps.io/llm-dsl-chatgpt";
-import { createWriteStream } from "fs";
-import { DSL } from "../src/DSL";
-import { LocalStorage } from "../src/Storage";
-
-const chat = new DSL<Options, any>( {
+import { ChatGPT, Options } from "@k-apps-io/llm-dsl-chatgpt";
+import { DSL, Locals } from "../../src/DSL";
+import { localFileStorage, localFileStream } from "../../src/Stream";
+interface ChatLocals extends Locals {
+  wasCalled: boolean;
+}
+const chat = new DSL<Options, ChatLocals, undefined>( {
   llm: new ChatGPT( {
-    timeout: 10000
-  } ),
-  storage: LocalStorage,
-  options: {
     model: "gpt-3.5-turbo",
-  },
-  metadata: {}
+  } ),
+  locals: {
+    wasCalled: false
+  }
 } );
 describe( ".function", () => {
   it( 'expectFunctionCall', async () => {
-    const $chat = chat.clone();
-    const fileStream = createWriteStream( `./__tests__/expectFunctionCall.log` );
-    fileStream.write( `// ../chats/${ $chat.chat.id }.json\n\n` );
-    await $chat
+    const $chat = await chat
+      .clone()
       .function<{ unit?: "Fahrenheit" | "Celsius"; }>( {
         name: "getTheCurrentWeather",
         parameters: {
@@ -31,9 +28,9 @@ describe( ".function", () => {
           }
         },
         description: "helps the AI model determine the current weather",
-        func: ( { unit = "Fahrenheit", context, chat: $this } ) => {
+        func: ( { unit = "Fahrenheit", locals, chat: $this } ) => {
           return new Promise( ( resolve, reject ) => {
-            $this.context = "it's snowing!";
+            locals.wasCalled = true;
             const weather = {
               temperature: unit === "Fahrenheit" ? 24 : 5,
               unit: unit,
@@ -53,16 +50,17 @@ describe( ".function", () => {
         message: "what's the weather like today?",
         function_call: { name: "getTheCurrentWeather" }
       } )
-      .response( ( response, context, $this ) => {
+      .response( ( { response, locals, chat: $this } ) => {
         return new Promise<void>( ( resolve, reject ) => {
-          $this.context = context.includes( "it's snowing!" ) ? "passed" : "failed";
+          if ( !locals.wasCalled ) {
+            reject( "function did not executed" );
+            return;
+          }
           resolve();
         } );
       } )
-      .stream( chunk => {
-        if ( chunk.type === "message" || chunk.type == "command" ) fileStream.write( chunk.content );
-      } );
-    expect( $chat.context ).toBe( "passed" );
-    fileStream.end();
+      .stream( localFileStream( { directory: __dirname, filename: 'function' } ) );
+    localFileStorage( { directory: __dirname, chat: $chat, filename: 'function' } );
+    expect( $chat.locals.wasCalled ).toBeTruthy();
   }, 60000 );
 } );

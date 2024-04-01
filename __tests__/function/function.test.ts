@@ -1,5 +1,6 @@
 import { ChatGPT, Options } from "@k-apps-io/llm-dsl-chatgpt";
 import { DSL, Locals } from "../../src/DSL";
+import { LocalStorage } from "../../src/Storage";
 import { localFileStorage, localFileStream } from "../../src/Stream";
 interface ChatLocals extends Locals {
   wasCalled: boolean;
@@ -8,6 +9,7 @@ const chat = new DSL<Options, ChatLocals, undefined>( {
   llm: new ChatGPT( {
     model: "gpt-3.5-turbo",
   } ),
+  storage: LocalStorage( { directory: __dirname } ),
   locals: {
     wasCalled: false
   }

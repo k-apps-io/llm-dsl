@@ -89,6 +89,15 @@ export interface Message {
   windowSize?: number;
 
   /**
+   * this is a optional calculated value and is an object including all the functions included with a prompt and the tokens associated
+   * with each function. An additional key total is also provide which will be the sum of all function tokens.
+   */
+  functions?: {
+    total: number;
+    [ key: string ]: number;
+  };
+
+  /**
    * The number of tokens in content.
    * @type {number}
    */

@@ -47,11 +47,19 @@ export interface Options {
    * for limiting the context to provide with the prompt
    */
   responseSize?: number;
+  /**
+   * a number that override the setting windowSize
+   */
+  windowSize?: number;
+  /**
+   * whether to include the chat functions in a response. When `false` the functions, if defined will not be included
+   * in the prompt.
+   */
+  functions?: false;
+
   role?: Prompt[ "role" ];
 }
-/**
- * 
- */
+
 export interface Locals {
   [ key: string ]: any;
 }
@@ -633,7 +641,8 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
       // token calculation is based off https://stackoverflow.com/questions/77168202/calculating-total-tokens-for-api-request-to-chatgpt-including-functions
       const messageTokens = $chat.llm.tokens( options.message ) + 3;
       const responseSize = ( options.responseSize || $chat.settings.minResponseSize );
-      const functions = Object.keys( $chat.functions ).map( k => $chat.functions[ k ] );
+      const includeFunctions = options.functions || options.functions === undefined;
+      const functions = includeFunctions ? Object.keys( $chat.functions ).map( k => $chat.functions[ k ] ) : [];
       const functionTokens = functions
         .map( ( { name, description, parameters } ) => {
           let tokenCount = 7; // 7 for each function to start
@@ -648,17 +657,20 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
                 tokenCount += 3;  // Add tokens if property has enum list
                 const options: string[] = parameters.properties[ key ].enum;
                 options.forEach( ( v: any ) => {
-                  tokenCount += 3;
-                  tokenCount += $chat.llm.tokens( String( v ) );
+                  tokenCount += $chat.llm.tokens( String( v ) ) + 3;
                 } );
               }
               tokenCount += $chat.llm.tokens( `${ key }:${ p_type }:${ p_desc }"` );
             } );
           }
-          return tokenCount;
-        } ).reduce( ( total, curr ) => total + curr, 0 );
+          return [ name, tokenCount ] as [ string, number ];
+        } ).reduce( ( total, [ name, count ] ) => {
+          total[ name ] = count;
+          total.total += count;
+          return total;
+        }, { total: 0 } as { total: number;[ key: string ]: number; } );
 
-      const limit = $chat.settings.windowSize - responseSize - messageTokens - functionTokens;
+      const limit = $chat.settings.windowSize - responseSize - messageTokens - functionTokens.total;
       const messages = $chat.window( { messages: $chat.data.messages, tokenLimit: limit, key: options.key } );
       const messageId = uuid();
       const visibility = options.visibility !== undefined ? options.visibility : Visibility.OPTIONAL;
@@ -672,6 +684,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
         visibility: visibility,
         window: messages.map( ( { id } ) => id! ),
         windowSize: messages.reduce( ( total, curr ) => total + curr.size, 0 ),
+        functions: functions.length === 0 ? undefined : functionTokens,
         user: $chat.user,
         createdAt: new Date(),
         prompt: prompt || messageId

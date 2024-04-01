@@ -1,4 +1,5 @@
 import { Chat, Message } from "./Chat";
+import { DSL } from "./DSL";
 
 /** 
 * An enum representing the different visibility statuses a message can hold.
@@ -21,6 +22,7 @@ export enum Visibility {
 }
 
 interface WindowOptions {
+  chat: DSL<any, any, any>;
   messages: Chat<any>[ "messages" ];
   tokenLimit: number;
   key?: string;
@@ -55,7 +57,7 @@ export const latest = ( { n }: LatestWindowOptions ): Window => {
  * All but EXCLUDED messages are then evaluated to fill the window up to the token limit. These messages
  * are evaluted in descending order and will maintain relative positioning. 
  */
-export const main: Window = ( { messages, tokenLimit, key } ) => {
+export const main: Window = ( { chat, messages, tokenLimit, key } ) => {
   const _messages: Chat<any>[ "messages" ] = messages
     // reduce to the latest keys
     .reduce( ( prev, curr, index ) => {
@@ -80,7 +82,7 @@ export const main: Window = ( { messages, tokenLimit, key } ) => {
     .map( ( message, index ) => ( { index, message } ) )
     .filter( m => m.message.visibility === Visibility.REQUIRED );
 
-  tokenLimit -= required.reduce( ( total, curr ) => total + curr.message.size, 0 );
+  tokenLimit -= chat.llm.windowTokens( required.map( ( { message } ) => message ) );
   // build the window
   const _window = [
     ...required,
@@ -92,8 +94,8 @@ export const main: Window = ( { messages, tokenLimit, key } ) => {
       .sort( ( a, b ) => b.index - a.index )
       // reduce the messages to be within the tokenLimit
       .reduce( ( prev, curr ) => {
-        const tokens = prev.reduce( ( total, c ) => total + c.message.size, 0 );
-        if ( curr.message.size + tokens <= tokenLimit ) prev.push( curr );
+        const tokens = chat.llm.windowTokens( [ ...prev.map( ( { message } ) => message ), curr.message ] );
+        if ( tokens <= tokenLimit ) prev.push( curr );
         return prev;
       }, [] as { index: number, message: Message; }[] )
   ];

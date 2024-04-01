@@ -49,6 +49,7 @@ export interface Message {
    * @type {string}
    */
   content: string;
+
   /**
    * The visibility status of the message.
    * @type {Visibility}

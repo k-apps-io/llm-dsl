@@ -41,12 +41,12 @@ export abstract class LLM {
   abstract tokens( text: string ): number;
 
   /**
-   * cacluates the total number of tokens for a list of Messages
+   * cacluates the total number of tokens for a window of Messages. This window is to be provided as additional input for a prompt.
    * 
-   * @param {Message[]} messages : a list 
-   * @returns {number} : the number of tokens in the string
+   * @param {Message[]} window : a list 
+   * @returns {number} : the total number of tokens created by the window.
    */
-  abstract messageTokens( messages: Message[] ): number;
+  abstract windowTokens( window: Message[] ): number;
 
   /**
    * cacluates the total number of tokens for a list of Functions

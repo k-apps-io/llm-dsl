@@ -641,7 +641,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
       // token calculation is based off https://stackoverflow.com/questions/77168202/calculating-total-tokens-for-api-request-to-chatgpt-including-functions
       const messageTokens = $chat.llm.tokens( options.message ) + 3;
       const responseSize = ( options.responseSize || $chat.settings.minResponseSize );
-      const includeFunctions = options.functions || options.functions === undefined;
+      const includeFunctions = options.functions === undefined;
       const functions = includeFunctions ? Object.keys( $chat.functions ).map( k => $chat.functions[ k ] ) : [];
       const functionTokens = functions
         .map( ( { name, description, parameters } ) => {

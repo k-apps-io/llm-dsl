@@ -34,7 +34,7 @@ describe( "pipeline.move", () => {
       .stream( localFileStream( { directory: __dirname, filename: "move.forward.1", append: false } ) );
     localFileStorage( { directory: __dirname, filename: "move.forward.1", chat: $chat } );
     expect( $chat.data.messages.length ).toBe( 4 ); // x2 for each prompt
-  } );
+  }, 60000 );
   it( "forward 2", async () => {
     const $chat = await chat
       .clone()
@@ -62,5 +62,5 @@ describe( "pipeline.move", () => {
       .stream( localFileStream( { directory: __dirname, filename: "move.forward.2", append: false } ) );
     localFileStorage( { directory: __dirname, filename: "move.forward.2", chat: $chat } );
     expect( $chat.data.messages.length ).toBe( 6 ); // x2 for each prompt
-  } );
+  }, 60000 );
 } );

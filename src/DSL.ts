@@ -42,16 +42,21 @@ export interface Options {
    */
   visibility?: Visibility;
   /**
-   * the number of tokens to reserve for the response, this is linked with the
-   * max token limit of the model. The difference between these two will be used 
-   * for limiting the context to provide with the prompt
+   * the number of tokens to reserve for the response
    */
   responseSize?: number;
+  /**
+   * a number that override the setting windowSize for the prompt
+   */
+  windowSize?: number;
+  /**
+   * whether to include the chat functions in the prompt. When `false` the functions, if defined will be excluded.
+   */
+  functions?: false;
+
   role?: Prompt[ "role" ];
 }
-/**
- * 
- */
+
 export interface Locals {
   [ key: string ]: any;
 }
@@ -555,12 +560,15 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
         this.out( { id: uuid(), type: "error", error: e } );
         error = e;
       } finally {
+        this.llm.close();
         this.out( { type: this.type, id: this.data.id!, state: "closed" } );
         const totalTokens = this.data.messages.reduce( ( prev, curr ) => {
-          if ( curr.windowSize ) {
-            prev.inputs += curr.size + curr.windowSize;
-          } else {
+          if ( curr.role === "assistant" ) {
             prev.outputs += curr.size;
+          } else {
+            prev.inputs += curr.size;
+            if ( curr.windowSize ) prev.inputs += curr.windowSize;
+            if ( curr.functions ) prev.inputs += curr.functions.total;
           }
           return prev;
         }, { inputs: 0, outputs: 0 } );
@@ -630,38 +638,18 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
    */
   private _prompt( $chat: DSL<O, L, M>, options: O, prompt?: string ) {
     return () => new Promise<void>( async ( resolve, reject ) => {
-      // token calculation is based off https://stackoverflow.com/questions/77168202/calculating-total-tokens-for-api-request-to-chatgpt-including-functions
-      const messageTokens = $chat.llm.tokens( options.message ) + 3;
-      const responseSize = ( options.responseSize || $chat.settings.minResponseSize );
-      const functions = Object.keys( $chat.functions ).map( k => $chat.functions[ k ] );
-      const functionTokens = functions
-        .map( ( { name, description, parameters } ) => {
-          let tokenCount = 7; // 7 for each function to start
-          tokenCount += $chat.llm.tokens( `${ name }:${ description }` );
-          if ( parameters ) {
-            tokenCount += 3;
-            Object.keys( parameters.properties ).forEach( key => {
-              tokenCount += 3;
-              const p_type = parameters.properties[ key ].type;
-              const p_desc = parameters.properties[ key ].description;
-              if ( p_type === "enum" ) {
-                tokenCount += 3;  // Add tokens if property has enum list
-                const options: string[] = parameters.properties[ key ].enum;
-                options.forEach( ( v: any ) => {
-                  tokenCount += 3;
-                  tokenCount += $chat.llm.tokens( String( v ) );
-                } );
-              }
-              tokenCount += $chat.llm.tokens( `${ key }:${ p_type }:${ p_desc }"` );
-            } );
-          }
-          return tokenCount;
-        } ).reduce( ( total, curr ) => total + curr, 0 );
-
-      const limit = $chat.settings.windowSize - responseSize - messageTokens - functionTokens;
-      const messages = $chat.window( { messages: $chat.data.messages, tokenLimit: limit, key: options.key } );
-      const messageId = uuid();
       const visibility = options.visibility !== undefined ? options.visibility : Visibility.OPTIONAL;
+      const responseSize = ( options.responseSize || $chat.settings.minResponseSize );
+      const targetWindowSize = ( options.windowSize || $chat.settings.windowSize );
+      const includeFunctions = options.functions === undefined;
+      const functions = includeFunctions ? Object.keys( $chat.functions ).map( k => $chat.functions[ k ] ) : [];
+      const functionTokens = $chat.llm.functionTokens( functions );
+
+      const messageTokens = $chat.llm.tokens( options.message );
+      const limit = targetWindowSize - responseSize - messageTokens - ( includeFunctions ? functionTokens.total : 0 );
+      const window = $chat.window( { chat: $chat, messages: $chat.data.messages, tokenLimit: limit, key: options.key } );
+      const actualWindowSize = $chat.llm.windowTokens( window );
+      const messageId = uuid();
       const role = options.role || $chat.options.role || "user";
       const message: Message = {
         id: messageId,
@@ -670,8 +658,9 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
         content: options.message.replaceAll( /\n\s+(\w)/gmi, '\n$1' ).trim(),
         size: messageTokens,
         visibility: visibility,
-        window: messages.map( ( { id } ) => id! ),
-        windowSize: messages.reduce( ( total, curr ) => total + curr.size, 0 ),
+        window: window.map( ( { id } ) => id! ),
+        windowSize: actualWindowSize,
+        functions: functions.length === 0 ? undefined : functionTokens,
         user: $chat.user,
         createdAt: new Date(),
         prompt: prompt || messageId
@@ -680,7 +669,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
       $chat.out( { ...message, type: "message", chat: $chat.data.id! } );
       const _options = { ...$chat.options, ...options, responseSize, visibility };
       const stream = $chat.llm.stream( {
-        messages: [ ...messages.map( m => ( { prompt: m.content, role: m.role } ) ), { prompt: options.message, role } ],
+        messages: [ ...window.map( m => ( { prompt: m.content, role: m.role } ) ), { prompt: options.message, role } ],
         functions: functions,
         user: $chat.user,
         ..._options

@@ -1,4 +1,5 @@
 import { Chat, Message } from "./Chat";
+import { DSL } from "./DSL";
 
 /** 
 * An enum representing the different visibility statuses a message can hold.
@@ -21,6 +22,7 @@ export enum Visibility {
 }
 
 interface WindowOptions {
+  chat: DSL<any, any, any>;
   messages: Chat<any>[ "messages" ];
   tokenLimit: number;
   key?: string;
@@ -55,7 +57,7 @@ export const latest = ( { n }: LatestWindowOptions ): Window => {
  * All but EXCLUDED messages are then evaluated to fill the window up to the token limit. These messages
  * are evaluted in descending order and will maintain relative positioning. 
  */
-export const main: Window = ( { messages, tokenLimit, key } ) => {
+export const main: Window = ( { chat, messages, tokenLimit, key } ) => {
   const _messages: Chat<any>[ "messages" ] = messages
     // reduce to the latest keys
     .reduce( ( prev, curr, index ) => {
@@ -80,23 +82,23 @@ export const main: Window = ( { messages, tokenLimit, key } ) => {
     .map( ( message, index ) => ( { index, message } ) )
     .filter( m => m.message.visibility === Visibility.REQUIRED );
 
-  tokenLimit -= required.reduce( ( total, curr ) => total + curr.message.size, 0 );
   // build the window
-  const _window = [
-    ...required,
-    ..._messages
-      // including the index for relative positioning
-      .map( ( message, index ) => ( { index, message } ) )
-      .filter( m => m.message.visibility === Visibility.OPTIONAL || m.message.visibility === Visibility.SYSTEM )
-      // sort in descending order ( latest messages first)
-      .sort( ( a, b ) => b.index - a.index )
-      // reduce the messages to be within the tokenLimit
-      .reduce( ( prev, curr ) => {
-        const tokens = prev.reduce( ( total, c ) => total + c.message.size, 0 );
-        if ( curr.message.size + tokens <= tokenLimit ) prev.push( curr );
-        return prev;
-      }, [] as { index: number, message: Message; }[] )
-  ];
+  const _window = _messages
+    // including the index for relative positioning
+    .map( ( message, index ) => ( { index, message } ) )
+    .filter( m => m.message.visibility !== Visibility.EXCLUDE )
+    // sort REQUIRED first and then in descending order by index
+    .sort( ( a, b ) => {
+      if ( a.message.visibility === Visibility.REQUIRED && b.message.visibility !== Visibility.REQUIRED ) return -1;
+      if ( a.message.visibility !== Visibility.REQUIRED && b.message.visibility === Visibility.REQUIRED ) return 1;
+      return b.index - a.index;
+    } )
+    // reduce the messages to be within the tokenLimit
+    .reduce( ( prev, curr ) => {
+      const tokens = chat.llm.windowTokens( [ ...prev.map( ( { message } ) => message ), curr.message ] );
+      if ( tokens <= tokenLimit ) prev.push( curr );
+      return prev;
+    }, [] as { index: number, message: Message; }[] );
 
   return _window
     // sort by the relative position

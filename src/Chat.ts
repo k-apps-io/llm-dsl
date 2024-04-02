@@ -33,7 +33,7 @@ export interface Message {
   id: string;
 
   /** 
-      * The role authoring the message.
+   * The role authoring the message.
    * @type {"user" | "assistant" | "system"}
    */
   role: "user" | "assistant" | "system";
@@ -49,6 +49,7 @@ export interface Message {
    * @type {string}
    */
   content: string;
+
   /**
    * The visibility status of the message.
    * @type {Visibility}
@@ -87,6 +88,15 @@ export interface Message {
    * @type {number}
    */
   windowSize?: number;
+
+  /**
+   * this is a optional calculated value and is an object including all the functions included with a prompt and the tokens associated
+   * with each function. An additional key `total` is also provided which will be the sum of all function tokens.
+   */
+  functions?: {
+    total: number;
+    [ key: string ]: number;
+  };
 
   /**
    * The number of tokens in content.

@@ -1,11 +1,14 @@
-import { ChatGPT } from "@k-apps-io/llm-dsl-chatgpt";
+import { ChatGPT, Options } from "@k-apps-io/llm-dsl-chatgpt";
 import { Message } from "../../src/Chat";
+import { DSL } from "../../src/DSL";
 import { Visibility, main } from "../../src/Window";
 
-const llm = new ChatGPT( { model: "gpt-3.5-turbo" } );
+const chat = new DSL<Options, any, any>( {
+  llm: new ChatGPT( { model: "gpt-3.5-turbo" } )
+} );
 
 const content: string = "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed id justo euismod, cursus nulla eget, tristique tellus. Vivamus JSON Example eleifend eu ex eget tempus. Integer quis dolor eget urna ultricies placerat. Donec sit amet vehicula metus. Vestibulum ante ipsum primis in faucibus orci luctus et ultrices posuere cubilia Curae; Suspendisse potenti.";
-const size = llm.tokens( content );
+const size = chat.llm.tokens( content );
 describe( "main.window", () => {
   it( "keys reducing", () => {
     const messages: Message[] = [
@@ -22,8 +25,7 @@ describe( "main.window", () => {
       createdAt: new Date(),
       prompt: String( index )
     } ) );
-    console.log( messages );
-    const result = main( { messages, tokenLimit: size * 3 } );
+    const result = main( { chat, messages, tokenLimit: size * 3 } );
     expect( result.length ).toBe( 2 );
     expect( result.reduce( ( prev, curr ) => prev + curr.size, 0 ) ).toBe( size * 2 );
     expect( result.map( ( { id } ) => id ) ).toMatchObject( [ "1", "2" ] );
@@ -47,8 +49,9 @@ describe( "main.window", () => {
       createdAt: new Date(),
       prompt: String( index )
     } ) );
-    const result = main( { messages, tokenLimit: size * 3 } );
-    expect( result.length ).toBe( 3 );
+    const target = 3;
+    const result = main( { chat, messages, tokenLimit: size * target + ( 3 * target ) + 3 } );
+    expect( result.length ).toBe( target );
     expect( result.reduce( ( prev, curr ) => prev + curr.size, 0 ) ).toBe( size * 3 );
     expect( result.map( ( { id } ) => id ) ).toMatchObject( [ "2", "3", "5" ] );
   } );
@@ -77,8 +80,9 @@ describe( "main.window", () => {
       createdAt: new Date(),
       prompt: String( index )
     } ) );
-    const result = main( { messages, tokenLimit: size * 5 } );
-    expect( result.length ).toBe( 5 );
+    const target = 5;
+    const result = main( { chat, messages, tokenLimit: size * target + ( 3 * target ) + 3 } );
+    expect( result.length ).toBe( target );
     expect( result.reduce( ( prev, curr ) => prev + curr.size, 0 ) ).toBe( size * 5 );
     expect( result.map( ( { id } ) => id ) ).toMatchObject( [ "3", "8", "9", "10", "11" ] );
   } );

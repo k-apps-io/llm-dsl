@@ -13,15 +13,16 @@ const chat = new DSL<Options, L, undefined>( {
   } )
 } );
 describe( "pipeline.exit", () => {
+
   it( "exit with OK", async () => {
     const $chat = await chat
       .clone()
       .prompt( {
         message: "hello!"
       }, "1" )
-      .response( ( { chat } ) => {
+      .response( ( { chat: $this } ) => {
         return new Promise<void>( ( resolve, reject ) => {
-          chat.exit();
+          $this.exit();
           resolve();
         } );
       } )
@@ -32,15 +33,16 @@ describe( "pipeline.exit", () => {
     expect( $chat.data.messages.length ).toBe( 2 );
     expect( $chat.exitCode ).toBe( 1 );
   } );
+
   it( "exit with Error", async () => {
     const $chat = chat
       .clone()
       .prompt( {
         message: "hello!"
       }, "1" )
-      .response( ( { chat } ) => {
+      .response( ( { chat: $this } ) => {
         return new Promise<void>( ( resolve, reject ) => {
-          chat.exit( new Error( "this error is expected" ) );
+          $this.exit( new Error( "this error is expected" ) );
           resolve();
         } );
       } )

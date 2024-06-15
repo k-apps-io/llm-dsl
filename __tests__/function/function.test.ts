@@ -66,4 +66,30 @@ describe( ".function", () => {
     localFileStorage( { directory: __dirname, chat: $chat, filename: 'function' } );
     expect( $chat.locals.wasCalled ).toBeTruthy();
   }, 60000 );
+
+  it( 'callsFunction', async () => {
+    const $chat = await chat
+      .clone()
+      .function( {
+        name: "myFunction",
+        parameters: {
+          "type": "object",
+          "properties": {}
+        },
+        description: "a function available on the DSL",
+        func: ( { locals, chat: $this } ) => {
+          return new Promise( ( resolve, reject ) => {
+            locals.wasCalled = true;
+            resolve( {
+              message: `hello`,
+              functions: false
+            } );
+          } );
+        }
+      } )
+      .call( "myFunction" )
+      .stream( localFileStream( { directory: __dirname, filename: 'callsFunction' } ) );
+    localFileStorage( { directory: __dirname, chat: $chat, filename: 'callsFunction' } );
+    expect( $chat.locals.wasCalled ).toBeTruthy();
+  } );
 } );

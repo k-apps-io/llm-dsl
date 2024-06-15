@@ -454,6 +454,36 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
     return this;
   }
 
+  call( name: string, args?: { [ key: string ]: any; }, id: string = uuid() ) {
+    const promise = ( $this: DSL<O, L, M> ) => {
+      return new Promise<void>( ( resolve, reject ) => {
+        const { func } = $this.functions[ name ];
+        let result: O | Options;
+        func( { ...args, locals: $this.locals, chat: $this } )
+          .then( _result => {
+            result = _result;
+            result.message = `call ${ name }() -> ${ result.message.replaceAll( /\n\s+(\w)/gmi, '\n$1' ).trim() }`;
+            result.role = "system";
+            result.visibility = result.visibility !== undefined ? result.visibility : Visibility.SYSTEM;
+          } )
+          .catch( error => {
+            result = {
+              message: `call ${ name }() -> ${ error }`,
+              role: "system",
+              visibility: Visibility.SYSTEM
+            };
+          } )
+          .finally( () => {
+            const stage = { id: uuid(), stage: name, promise: $this._prompt( $this, { ...$this.options, ...result } as O, id ) };
+            $this.pipeline.push( stage );
+            resolve();
+          } );
+      } );
+    };
+    this.pipeline.push( { id: id, stage: `call function - ${ name }`, promise } );
+    return this;
+  }
+
   /**
    * directly access the LLM response the latest prompt.
    */

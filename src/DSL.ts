@@ -243,8 +243,9 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
     return this;
   }
 
+
   /**
-   * add a message to the chat without generating a prompt.
+   * add a message after the current pipeline position without generating a prompt.
    */
   push( options: ( Options | O | StageFunction<O, L, M, Options | O> ), id: string = uuid() ) {
     const promise = ( $this: DSL<O, L, M> ) => new Promise<void>( ( resolve, reject ) => {
@@ -254,6 +255,46 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
       const content = _options.message.replaceAll( /\n\s+(\w)/gmi, '\n$1' ).trim();
       const message: Message = {
         id: messageId,
+        key: _options.key,
+        role: _options.role || $this.options.role || "user",
+        content: content,
+        size: $this.llm.tokens( content ) + 3,
+        visibility: visibility,
+        createdAt: new Date(),
+        window: [],
+        windowSize: 0,
+        user: $this.user,
+        prompt: messageId,
+      };
+      $this.data.messages.push( message );
+      $this.out( { ...message, chat: $this.data.id!, type: "message" } );
+      resolve();
+    } );
+    const stage = { id: id, stage: "push", promise };
+    if ( this.pipelineCursor === -1 ) {
+      this.pipeline.push( stage );
+    } else {
+      this.pipeline = [
+        ...this.pipeline.slice( 0, this.pipelineCursor + 1 ), // 0 to the current stage inclusive
+        stage,
+        ...this.pipeline.slice( this.pipelineCursor + 1 ) // the next stage to the end
+      ];
+    }
+    return this;
+  }
+
+  /**
+   * add a message to the end of the chat without generating a prompt.
+   */
+  append( options: ( Options | O | StageFunction<O, L, M, Options | O> ), id: string = uuid() ) {
+    const promise = ( $this: DSL<O, L, M> ) => new Promise<void>( ( resolve, reject ) => {
+      const messageId = uuid();
+      const _options: ( Options | O ) = typeof options === "function" ? options( { locals: $this.locals, chat: $this } ) : options;
+      const visibility = _options.visibility !== undefined ? _options.visibility : Visibility.OPTIONAL;
+      const content = _options.message.replaceAll( /\n\s+(\w)/gmi, '\n$1' ).trim();
+      const message: Message = {
+        id: messageId,
+        key: _options.key,
         role: _options.role || $this.options.role || "user",
         content: content,
         size: $this.llm.tokens( content ) + 3,

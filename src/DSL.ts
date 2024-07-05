@@ -435,7 +435,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
    * 
    * @returns a clone of the chat object
    */
-  clone( { startAt = "beginning" }: { startAt?: "beginning" | "end" | number; } ) {
+  clone( { startAt }: { startAt: "beginning" | "end" | number; } = { startAt: "beginning" } ) {
     const $this = cloneDeep( this );
     $this.data.id = uuid();
     $this.data.messages = $this.data.messages.map( m => {

@@ -435,7 +435,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
    * 
    * @returns a clone of the chat object
    */
-  clone( offset: "end" | "beginning" = "beginning" ) {
+  clone( { startAt = "beginning" }: { startAt?: "beginning" | "end" | number; } ) {
     const $this = cloneDeep( this );
     $this.data.id = uuid();
     $this.data.messages = $this.data.messages.map( m => {
@@ -446,7 +446,13 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
       }
       return m;
     } );
-    $this.pipelineCursor = offset === "beginning" ? -1 : $this.pipeline.length - 1;
+    if ( startAt === "beginning" ) {
+      $this.pipelineCursor = -1;
+    } else if ( startAt === "end" ) {
+      $this.pipelineCursor = $this.pipeline.length - 1;
+    } else {
+      $this.pipelineCursor = startAt;
+    }
     return $this;
   }
 

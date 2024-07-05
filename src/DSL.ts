@@ -181,17 +181,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
       if ( $this.data.user === undefined ) $this.data.user = $this.user;
       resolve();
     } );
-
-    const stage = { id: uuid(), stage: "user", promise };
-    if ( this.pipelineCursor === -1 ) {
-      this.pipeline.push( stage );
-    } else {
-      this.pipeline = [
-        ...this.pipeline.slice( 0, this.pipelineCursor + 1 ), // 0 to the current stage inclusive
-        stage,
-        ...this.pipeline.slice( this.pipelineCursor + 1 ) // the next stage to the end
-      ];
-    }
+    this.pipeline.push( { id: uuid(), stage: "user", promise } );
     return this;
   }
 

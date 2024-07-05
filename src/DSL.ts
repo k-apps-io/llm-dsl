@@ -435,7 +435,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
    * 
    * @returns a clone of the chat object
    */
-  clone() {
+  clone( offset: "end" | "beginning" = "beginning" ) {
     const $this = cloneDeep( this );
     $this.data.id = uuid();
     $this.data.messages = $this.data.messages.map( m => {
@@ -446,6 +446,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
       }
       return m;
     } );
+    $this.pipelineCursor = offset === "beginning" ? -1 : $this.pipeline.length - 1;
     return $this;
   }
 
@@ -712,7 +713,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
       const visibility = options.visibility !== undefined ? options.visibility : Visibility.OPTIONAL;
       const responseSize = ( options.responseSize || $chat.settings.minResponseSize );
       const targetWindowSize = ( options.windowSize || $chat.settings.windowSize );
-      const includeFunctions = options.functions !== undefined;
+      const includeFunctions = options.functions === undefined;
       const functions = includeFunctions ? Object.keys( $chat.functions ).map( k => $chat.functions[ k ] ) : [];
       const functionTokens = $chat.llm.functionTokens( functions );
 

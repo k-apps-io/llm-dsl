@@ -712,7 +712,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
       const visibility = options.visibility !== undefined ? options.visibility : Visibility.OPTIONAL;
       const responseSize = ( options.responseSize || $chat.settings.minResponseSize );
       const targetWindowSize = ( options.windowSize || $chat.settings.windowSize );
-      const includeFunctions = options.functions === undefined;
+      const includeFunctions = options.functions !== undefined;
       const functions = includeFunctions ? Object.keys( $chat.functions ).map( k => $chat.functions[ k ] ) : [];
       const functionTokens = $chat.llm.functionTokens( functions );
 

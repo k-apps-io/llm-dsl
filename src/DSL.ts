@@ -763,12 +763,12 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
             if ( chunk.type === "function" ) {
               const func = $chat.functions[ chunk.name! ];
               if ( func !== undefined ) funcs.push( { ...func, args: chunk.arguments } );
-              const content = `call: ${ chunk.name }(${ chunk.arguments })`;
+              const content = `The LLM called function ${ chunk.name } with arguments ${ chunk.arguments }`;
               const functionSize = $chat.llm.tokens( content ) + 3;
               const functionUuid = uuid();
               const functionMessage: Message = {
                 id: functionUuid,
-                role: "assistant",
+                role: "system",
                 content: content,
                 size: functionSize,
                 visibility: options.visibility !== undefined ? options.visibility : Visibility.SYSTEM,
@@ -785,6 +785,8 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
               response += chunk.content;
               if ( response.length >= 5 ) {
                 if ( response.startsWith( "call:" ) ) {
+                  // sometimes the llm will not send a function chunk but stream
+                  // this as a normal chunk. Setting the flag = True to handle the function
                   isFunction = true;
                 } else {
                   $chat.out( {
@@ -883,10 +885,10 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
         let result: O | Options;
         try {
           result = await promise( { ...params, locals: $chat.locals, chat: $chat } );
-          result.message = `call ${ name }() -> ${ result.message.replaceAll( /\n\s+(\w)/gmi, '\n$1' ).trim() }`;
+          result.message = `${ result.message.replaceAll( /\n\s+(\w)/gmi, '\n$1' ).trim() }`;
         } catch ( error ) {
           result = {
-            message: `call ${ name }() -> ${ error }`
+            message: `${ error }`
           };
         }
         result.role = "system";

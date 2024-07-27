@@ -8,8 +8,6 @@ This is a DSL for interacting with a LLM. This paired with an implementation of 
 npm install @k-apps-io/llm-dsl @k-apps-io/llm-dsl-chatgpt
 ```
 
-
-
 # Usage
 
 ### Hello World
@@ -663,43 +661,6 @@ chat
     console.error( error );
   } );
 ```
-
-# Release Notes
-
-##  [Version 2.0.2] - 2024-04-02
-
-### Data Structure
-- New attribute: `Message.functions` - an optional object listing key value pairs of the function name and the number of input tokens. An additional key `Message.functions.total` will be included indicating the total tokens used by functions.
-
-### Prompt Options
-- New Argument: `functions` - a falsy value indicating whether functions should be excluded on an individual prompt.
-
-### Features
-- The instance of LLM now includes abstract functions for `windowTokens`, `functionTokens` and `close`. Both the `windowTokens` and `functionTokens` were extracted from the DSL and provied to the LLM as each may calculate these differently.
-- `Window` now accepts an addition argument `chat` which gives the `window` function the ability to access additional data specifically the LLMs `windowTokens` function. 
-
-### Bug Fixes
-- fixes summarizing `Chat.inputs` and `Chat.outputs`. All messages with role `assistant` are summarized in `Chat.outputs` all other messages will be `Chat.inputs`.
-
-
-## [Version 2.0.1] - 2024-03-26
-
-
-### Data Structure
-below describes the changes made to the `Chat` interface
-- Visibility Enum: `Visibility.OPTIONAL` = `0`; `Visibility.SYSTEM` = `1`; Prior to this release, the values were swapped.
-- `Message.included` was renamed to `Message.window`
-- `Message.tokens` was renamed to `Message.size`
-- `Chat.metadata` is now typed.whether a token was part of the input promopt or the output response. Models charge differently for each.
-- New attribute: `Message.prompt` which will identify what prompt or other stage generated the message.
-- New attribute: `Message.windowSize`
-- New attribute: `Chat.inputs` and `Chat.outputs` which summarize the tokens within the chat and diffirentiate 
-
-### Features
-- `stream` now supports multiple `StreamHandlers` as `rest` arguments.
-- `expect` now supports multiple `ResonseStages` as `rest` arguments.
-- New type `Window` which enables a custom windowing function.
-- New `pipeline` management features: `moveTo`, `exit`, `pause`.
 
 # Support
 

@@ -502,21 +502,52 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
     return this;
   }
 
+  /**
+   * 
+   * @param name 
+   * @param args 
+   * @param id 
+   * @returns 
+   */
   call( name: string, args?: { [ key: string ]: any; }, id: string = uuid() ) {
     const promise = ( $this: DSL<O, L, M> ) => {
       return new Promise<void>( ( resolve, reject ) => {
+        if ( !$this.functions[ name ] ) {
+          return reject( `function not found: ${ name }` );
+        }
+        // add a new message representing the function was called
+        const messageId = uuid();
+        const content = `The LLM called function ${ name } with arguments ${ JSON.stringify( args ) }`;
+        const functionSize = $this.llm.tokens( content ) + 3;
+        const functionCall: Message = {
+          id: messageId,
+          role: "system",
+          content: content,
+          visibility: Visibility.SYSTEM,
+          createdAt: new Date(),
+          size: functionSize,
+          prompt: id
+        };
+        $this.data.messages.push( functionCall );
+        $this.out( {
+          ...functionCall,
+          type: "message",
+          chat: $this.data.id!
+        } );
+
+        // execute the function
         const { func } = $this.functions[ name ];
         let result: O | Options;
         func( { ...args, locals: $this.locals, chat: $this } )
           .then( _result => {
             result = _result;
-            result.message = `call ${ name }() -> ${ result.message.replaceAll( /\n\s+(\w)/gmi, '\n$1' ).trim() }`;
+            result.message = `${ result.message.replaceAll( /\n\s+(\w)/gmi, '\n$1' ).trim() }`;
             result.role = "system";
             result.visibility = result.visibility !== undefined ? result.visibility : Visibility.SYSTEM;
           } )
           .catch( error => {
             result = {
-              message: `call ${ name }() -> ${ error }`,
+              message: `${ error }`,
               role: "system",
               visibility: Visibility.SYSTEM
             };

@@ -65,8 +65,7 @@ export const json = ( { blocks, errorPrompt, exact }: ExpectJSON = { blocks: 1, 
         if ( lang !== "json" ) continue;
         let json: { [ key: string ]: unknown; } = {};
         try {
-          cleanJSON( code );
-          json = JSON.parse( code );
+          json = JSON.parse( cleanJSON( code ) );
           _blocks.push( json );
           blockNumber += 1;
         } catch ( error ) {

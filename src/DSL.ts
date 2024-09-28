@@ -470,6 +470,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
         const ruleId = id || uuid();
         const _key = key || `Rule - ${ name }`;
         const index = $this.data.messages.map( m => m.key ).indexOf( _key );
+        // upsert the rule if the content has changed
         if ( index === -1 || $this.data.messages[ index ].content !== content ) {
           $this.data.messages.push( {
             id: ruleId,

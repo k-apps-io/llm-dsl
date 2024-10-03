@@ -408,7 +408,26 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
       if ( result instanceof Promise ) {
         result
           .then( data => {
+            // merge the messages from the previous executed stages
+            // with the history from the loaded chat
+            // this is required for chat's that have been created
+            // outside of the executing pipeline. Any messages created by prior
+            // executing stages will be added if the id or key is unique between
+            // the current pipeline messages and the incoming messages.
+            const messages: Message[] = [
+              ...$this.data.messages.filter( m => m.visibility === Visibility.REQUIRED || m.key !== undefined ),
+              ...data.messages,
+            ].reduce( ( prev, curr ) => {
+              const index = prev.findIndex( m => m.id === curr.id || ( m.key && curr.key && m.key === curr.key ) );
+              if ( index === -1 ) {
+                prev.push( curr );
+              } else {
+                prev[ index ] = curr;
+              }
+              return prev;
+            }, [] as Message[] );
             $this.data = data;
+            $this.data.messages = messages;
             resolve();
           } )
           .catch( reject );
@@ -464,8 +483,8 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
    */
   rule( options: ( Rule | StageFunction<O, L, M, Rule> ) ) {
     const promise = ( $this: DSL<O, L, M> ) => {
-      const { name, requirement, key, id }: Rule = typeof options === "function" ? options( { locals: $this.locals, chat: $this } ) : options;
-      const content = `This conversation has the following rule: Rule ${ name } - requirement - ${ requirement }`;
+      const { name, requirement, key, id, role }: Rule = typeof options === "function" ? options( { locals: $this.locals, chat: $this } ) : options;
+      const content = `Rule ${ name } - ${ requirement }`;
       return new Promise<void>( ( resolve, reject ) => {
         const ruleId = id || uuid();
         const _key = key || `Rule - ${ name }`;
@@ -474,7 +493,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
         if ( index === -1 || $this.data.messages[ index ].content !== content ) {
           $this.data.messages.push( {
             id: ruleId,
-            role: "system",
+            role: role || "system",
             key: _key,
             content: content,
             size: $this.llm.tokens( content ) + 3,

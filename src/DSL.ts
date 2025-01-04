@@ -523,11 +523,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
   }
 
   /**
-   * 
-   * @param name 
-   * @param args 
-   * @param id 
-   * @returns 
+   * manually call a function within the DSL
    */
   call( name: string, args?: { [ key: string ]: any; }, id: string = uuid() ) {
     const promise = ( $this: DSL<O, L, M> ) => {
@@ -736,7 +732,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
   }
 
   /**
-   * sets the position of the pipeline to the stage with the provided id. If a id matches the stage will be executed
+   * sets the position of the pipeline to the stage with the provided id. If a id matches a stage, that stage will be executed
    * next and continue from that position. If a stage is not found a error is thrown.
    */
   moveTo( { id }: { id: string; } ) {

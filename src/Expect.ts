@@ -1,6 +1,7 @@
 
 
 import JSON from "json5";
+import { jsonrepair } from "jsonrepair";
 import { Message } from "./Chat";
 import { DSL, Locals, Metadata, Options } from "./DSL";
 
@@ -10,6 +11,21 @@ export interface ResponseStageArgs<O extends Options, L extends Locals, M extend
   chat: DSL<O, L, M>;
 }
 export type ResponseStage<O extends Options, L extends Locals, M extends Metadata> = ( args: ResponseStageArgs<O, L, M> ) => Promise<void>;
+
+/**
+ * cleans text that is assumed to be json. This text will also be repaired to be JSON if possible
+ * @param text a JSON string
+ * @returns a JSON string
+ */
+export const cleanJSON = ( text: string ): string => {
+  // convert fractions to the decimal version e.g. // values like `: 1/2` -> : 0.5
+  text = text.replaceAll( /:\s*?(\d+)\/(\d+)/g, ( _, numerator, denominator ) => {
+    // Convert fraction to decimal
+    return `: ${ parseFloat( numerator ) / parseFloat( denominator ) }`;
+  } );
+  text = jsonrepair( text );
+  return text;
+};
 
 type JSONValue = string | number | boolean | null | { [ key: string ]: JSONValue; } | JSONValue[];
 
@@ -51,7 +67,7 @@ export const json = ( { blocks, errorPrompt, exact }: ExpectJSON = { blocks: 1, 
         if ( lang !== "json" ) continue;
         let json: { [ key: string ]: unknown; } = {};
         try {
-          json = JSON.parse( code );
+          json = JSON.parse( cleanJSON( code ) );
           _blocks.push( json );
           blockNumber += 1;
         } catch ( error ) {

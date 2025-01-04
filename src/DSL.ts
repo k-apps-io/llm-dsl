@@ -408,7 +408,26 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
       if ( result instanceof Promise ) {
         result
           .then( data => {
+            // merge the messages from the previous executed stages
+            // with the history from the loaded chat
+            // this is required for chat's that have been created
+            // outside of the executing pipeline. Any messages created by prior
+            // executing stages will be added if the id or key is unique between
+            // the current pipeline messages and the incoming messages.
+            const messages: Message[] = [
+              ...$this.data.messages.filter( m => m.visibility === Visibility.REQUIRED || m.key !== undefined ),
+              ...data.messages,
+            ].reduce( ( prev, curr ) => {
+              const index = prev.findIndex( m => m.id === curr.id || ( m.key && curr.key && m.key === curr.key ) );
+              if ( index === -1 ) {
+                prev.push( curr );
+              } else {
+                prev[ index ] = curr;
+              }
+              return prev;
+            }, [] as Message[] );
             $this.data = data;
+            $this.data.messages = messages;
             resolve();
           } )
           .catch( reject );
@@ -464,16 +483,17 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
    */
   rule( options: ( Rule | StageFunction<O, L, M, Rule> ) ) {
     const promise = ( $this: DSL<O, L, M> ) => {
-      const { name, requirement, key, id }: Rule = typeof options === "function" ? options( { locals: $this.locals, chat: $this } ) : options;
-      const content = `This conversation has the following rule: Rule ${ name } - requirement - ${ requirement }`;
+      const { name, requirement, key, id, role }: Rule = typeof options === "function" ? options( { locals: $this.locals, chat: $this } ) : options;
+      const content = `Rule ${ name } - ${ requirement }`;
       return new Promise<void>( ( resolve, reject ) => {
         const ruleId = id || uuid();
         const _key = key || `Rule - ${ name }`;
         const index = $this.data.messages.map( m => m.key ).indexOf( _key );
+        // upsert the rule if the content has changed
         if ( index === -1 || $this.data.messages[ index ].content !== content ) {
           $this.data.messages.push( {
             id: ruleId,
-            role: "system",
+            role: role || "system",
             key: _key,
             content: content,
             size: $this.llm.tokens( content ) + 3,
@@ -502,21 +522,48 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
     return this;
   }
 
+  /**
+   * manually call a function within the DSL
+   */
   call( name: string, args?: { [ key: string ]: any; }, id: string = uuid() ) {
     const promise = ( $this: DSL<O, L, M> ) => {
       return new Promise<void>( ( resolve, reject ) => {
+        if ( !$this.functions[ name ] ) {
+          return reject( `function not found: ${ name }` );
+        }
+        // add a new message representing the function was called
+        const messageId = uuid();
+        const content = `The LLM called function ${ name } with arguments ${ JSON.stringify( args ) }`;
+        const functionSize = $this.llm.tokens( content ) + 3;
+        const functionCall: Message = {
+          id: messageId,
+          role: "system",
+          content: content,
+          visibility: Visibility.SYSTEM,
+          createdAt: new Date(),
+          size: functionSize,
+          prompt: id
+        };
+        $this.data.messages.push( functionCall );
+        $this.out( {
+          ...functionCall,
+          type: "message",
+          chat: $this.data.id!
+        } );
+
+        // execute the function
         const { func } = $this.functions[ name ];
         let result: O | Options;
         func( { ...args, locals: $this.locals, chat: $this } )
           .then( _result => {
             result = _result;
-            result.message = `call ${ name }() -> ${ result.message.replaceAll( /\n\s+(\w)/gmi, '\n$1' ).trim() }`;
+            result.message = `${ result.message.replaceAll( /\n\s+(\w)/gmi, '\n$1' ).trim() }`;
             result.role = "system";
             result.visibility = result.visibility !== undefined ? result.visibility : Visibility.SYSTEM;
           } )
           .catch( error => {
             result = {
-              message: `call ${ name }() -> ${ error }`,
+              message: `${ error }`,
               role: "system",
               visibility: Visibility.SYSTEM
             };
@@ -685,7 +732,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
   }
 
   /**
-   * sets the position of the pipeline to the stage with the provided id. If a id matches the stage will be executed
+   * sets the position of the pipeline to the stage with the provided id. If a id matches a stage, that stage will be executed
    * next and continue from that position. If a stage is not found a error is thrown.
    */
   moveTo( { id }: { id: string; } ) {

@@ -41,6 +41,7 @@
   "dependencies": {
     "ebnf": "^1.9.1",
     "json5": "^2.2.3",
+    "jsonrepair": "^3.11.2",
     "lodash": "^4.17.21",
     "uuid": "^9.0.1"
   },

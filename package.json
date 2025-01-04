@@ -1,6 +1,6 @@
 {
   "name": "@k-apps-io/llm-dsl",
-  "version": "2.1.1",
+  "version": "2.1.2",
   "description": "a DSL for Large Language Models (LLM)",
   "main": "dist/index.js",
   "scripts": {
@@ -41,6 +41,7 @@
   "dependencies": {
     "ebnf": "^1.9.1",
     "json5": "^2.2.3",
+    "jsonrepair": "^3.11.2",
     "lodash": "^4.17.21",
     "uuid": "^9.0.1"
   },

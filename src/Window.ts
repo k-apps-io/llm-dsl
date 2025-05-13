@@ -88,6 +88,13 @@ export const main: Window = ( { chat, messages, tokenLimit, key } ) => {
     .map( ( message, index ) => ( { index, message } ) )
     .filter( m => m.message.visibility !== Visibility.EXCLUDE )
     // sort REQUIRED first and then in descending order by index
+    // this will ensure that the required messages are always included in the window
+    // and the rest are included with the latest messages first, in result the 
+    // token limit is evaluated in reverse order of when the messages were added
+    // to the conversation. In result, the messages that dropped out of the window
+    // will be the ones that were added earlier in the conversation.
+    // this is important for the token limit as the latest messages are more likely
+    // to be the ones that are relevant to the current conversation.
     .sort( ( a, b ) => {
       if ( a.message.visibility === Visibility.REQUIRED && b.message.visibility !== Visibility.REQUIRED ) return -1;
       if ( a.message.visibility !== Visibility.REQUIRED && b.message.visibility === Visibility.REQUIRED ) return 1;
@@ -101,7 +108,8 @@ export const main: Window = ( { chat, messages, tokenLimit, key } ) => {
     }, [] as { index: number, message: Message; }[] );
 
   return _window
-    // sort by the relative position
+    // the window is reduced, the following sort returns the
+    // messages to their original order - when they were added to the conversation
     .sort( ( a, b ) => a.index - b.index )
     .map( ( { message } ) => message )
     ;

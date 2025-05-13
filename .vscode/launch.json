@@ -1,0 +1,44 @@
+{
+  "configurations": [
+    {
+      "type": "node",
+      "request": "launch",
+      "name": "Debug Jest Test (Prompt)",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "test",
+        "--",
+        "${input:testFile}",
+        "-t",
+        "${input:testName}"
+      ],
+      "console": "integratedTerminal"
+    },
+    {
+      "type": "node",
+      "request": "launch",
+      "name": "Debug Jest Test Suite (Prompt)",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "test",
+        "--",
+        "${input:testFile}",
+      ],
+      "console": "integratedTerminal"
+    },
+  ],
+  "inputs": [
+    {
+      "id": "testFile",
+      "type": "promptString",
+      "description": "Enter test name pattern"
+    },
+    {
+      "id": "testName",
+      "type": "promptString",
+      "description": "Enter test name pattern"
+    }
+  ]
+}

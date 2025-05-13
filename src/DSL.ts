@@ -1,6 +1,5 @@
 import JSON from "json5";
 import { cloneDeep } from "lodash";
-import { v4 as uuid } from "uuid";
 import { Chat, Message } from "./Chat";
 import { extract } from "./CodeBlocks";
 import { ResponseStage } from "./Expect";
@@ -131,7 +130,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
     this.window = window || main;
     this.storage = storage || NoStorage;
     this.data = {
-      id: uuid(),
+      id: this.storage.newId(),
       messages: [],
       sidebars: [],
       metadata: metadata,
@@ -181,7 +180,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
       if ( $this.data.user === undefined ) $this.data.user = $this.user;
       resolve();
     } );
-    this.pipeline.push( { id: uuid(), stage: "user", promise } );
+    this.pipeline.push( { id: this.storage.newId(), stage: "user", promise } );
     return this;
   }
 
@@ -191,7 +190,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
    * @param value: L
    * @returns DSL
    */
-  setLocals( args: ( L | ( ( args: { chat: DSL<O, L, M>; } ) => L | Promise<L> ) ), id: string = uuid() ) {
+  setLocals( args: ( L | ( ( args: { chat: DSL<O, L, M>; } ) => L | Promise<L> ) ), id: string = this.storage.newId() ) {
     const promise = ( $this: DSL<O, L, M> ) => new Promise<void>( ( resolve, reject ) => {
       if ( typeof args === "function" ) {
         const result = args( { chat: $this } );
@@ -218,7 +217,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
   /**
    * set metadata for the chat
    */
-  setMetadata( args: ( M | ( ( _args: { chat: DSL<O, L, M>; } ) => M | Promise<M> ) ), id: string = uuid() ) {
+  setMetadata( args: ( M | ( ( _args: { chat: DSL<O, L, M>; } ) => M | Promise<M> ) ), id: string = this.storage.newId() ) {
     const promise = ( $this: DSL<O, L, M> ) => new Promise<void>( ( resolve, reject ) => {
       const metadata = $this.data.metadata || {};
       if ( typeof args === "function" ) {
@@ -247,9 +246,9 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
   /**
    * add a message after the current pipeline position without generating a prompt.
    */
-  push( options: ( Options | O | StageFunction<O, L, M, Options | O> ), id: string = uuid() ) {
+  push( options: ( Options | O | StageFunction<O, L, M, Options | O> ), id: string = this.storage.newId() ) {
     const promise = ( $this: DSL<O, L, M> ) => new Promise<void>( ( resolve, reject ) => {
-      const messageId = uuid();
+      const messageId = this.storage.newId();
       const _options: ( Options | O ) = typeof options === "function" ? options( { locals: $this.locals, chat: $this } ) : options;
       const visibility = _options.visibility !== undefined ? _options.visibility : Visibility.OPTIONAL;
       const content = _options.message.replaceAll( /\n\s+(\w)/gmi, '\n$1' ).trim();
@@ -286,9 +285,9 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
   /**
    * add a message to the end of the chat without generating a prompt.
    */
-  append( options: ( Options | O | StageFunction<O, L, M, Options | O> ), id: string = uuid() ) {
+  append( options: ( Options | O | StageFunction<O, L, M, Options | O> ), id: string = this.storage.newId() ) {
     const promise = ( $this: DSL<O, L, M> ) => new Promise<void>( ( resolve, reject ) => {
-      const messageId = uuid();
+      const messageId = this.storage.newId();
       const _options: ( Options | O ) = typeof options === "function" ? options( { locals: $this.locals, chat: $this } ) : options;
       const visibility = _options.visibility !== undefined ? _options.visibility : Visibility.OPTIONAL;
       const content = _options.message.replaceAll( /\n\s+(\w)/gmi, '\n$1' ).trim();
@@ -319,7 +318,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
    * @param options 
    * @returns {object} - the chat object   
    */
-  prompt( options: ( Options | O | StageFunction<O, L, M, Options | O> ), id: string = uuid() ) {
+  prompt( options: ( Options | O | StageFunction<O, L, M, Options | O> ), id: string = this.storage.newId() ) {
     const promise = ( $this: DSL<O, L, M> ) => {
       return new Promise<void>( ( resolve, reject ) => {
         const _options: ( Options | O ) = typeof options === "function" ? options( { locals: $this.locals, chat: $this } ) : options;
@@ -338,12 +337,12 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
    * @param func 
    * @returns {object} - the chat object   
    */
-  promptForEach( func: StageFunction<O, L, M, ( Options | O )[]>, id: string = uuid() ) {
+  promptForEach( func: StageFunction<O, L, M, ( Options | O )[]>, id: string = this.storage.newId() ) {
     const promise = ( $this: DSL<O, L, M> ) => {
       return new Promise<void>( ( resolve, reject ) => {
         const promises = func( { locals: $this.locals, chat: $this } )
           .map( p => {
-            return { id: uuid(), stage: "prompt", promise: $this._prompt( $this, { ...$this.options, ...p } as O ) };
+            return { id: this.storage.newId(), stage: "prompt", promise: $this._prompt( $this, { ...$this.options, ...p } as O ) };
           } );
         $this.pipeline = [
           ...$this.pipeline.slice( 0, $this.pipelineCursor + 1 ),
@@ -364,11 +363,11 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
    * @param func 
    * @returns {object} - the chat object   
    */
-  branchForEach( func: StageFunction<O, L, M, ( Options | O )[]>, id: string = uuid() ) {
+  branchForEach( func: StageFunction<O, L, M, ( Options | O )[]>, id: string = this.storage.newId() ) {
     const promise = ( $this: DSL<O, L, M> ) => {
       return new Promise<void>( ( resolve, reject ) => {
         const promises = func( { locals: $this.locals, chat: $this } ).map( p => {
-          return { id: uuid(), stage: "prompt", promise: $this._prompt( $this, { ...$this.options, ...p } as O ) };
+          return { id: this.storage.newId(), stage: "prompt", promise: $this._prompt( $this, { ...$this.options, ...p } as O ) };
         } );
         const joinIndex = $this.pipeline.slice( $this.pipelineCursor ).map( p => p.stage ).indexOf( "join" );
         if ( joinIndex === -1 ) {
@@ -390,7 +389,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
   /**
    * establishes a stopping point for the `branchForEach`
    */
-  join( id: string = uuid() ) {
+  join( id: string = this.storage.newId() ) {
     // see forEachBranch
     this.pipeline.push( { id: id, stage: "join", promise: ( $this: DSL<O, L, M> ) => new Promise<void>( ( resolve ) => resolve() ) } );
     return this;
@@ -402,7 +401,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
    * @param {string} id - a chat id 
    * @returns {object} - the chat object   
    */
-  load( id: string, stageId: string = uuid() ) {
+  load( id: string, stageId: string = this.storage.newId() ) {
     const promise = ( $this: DSL<O, L, M> ) => new Promise<void>( async ( resolve, reject ) => {
       const result = $this.storage.getById( id );
       if ( result instanceof Promise ) {
@@ -456,10 +455,10 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
    */
   clone( { startAt }: { startAt: "beginning" | "end" | number; } = { startAt: "beginning" } ) {
     const $this = cloneDeep( this );
-    $this.data.id = uuid();
+    $this.data.id = this.storage.newId();
     $this.data.messages = $this.data.messages.map( m => {
       const index = $this.rules.indexOf( m.id! );
-      m.id = uuid();
+      m.id = this.storage.newId();
       if ( index !== -1 ) {
         $this.rules[ index ] = m.id;
       }
@@ -484,10 +483,10 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
   rule( options: ( Rule | StageFunction<O, L, M, Rule> ) ) {
     const promise = ( $this: DSL<O, L, M> ) => {
       const { name, requirement, key, id, role }: Rule = typeof options === "function" ? options( { locals: $this.locals, chat: $this } ) : options;
-      const content = `Rule ${ name } - ${ requirement }`;
+      const content = `${ name } - ${ requirement }`;
       return new Promise<void>( ( resolve, reject ) => {
-        const ruleId = id || uuid();
-        const _key = key || `Rule - ${ name }`;
+        const ruleId = id || this.storage.newId();
+        const _key = key || name;
         const index = $this.data.messages.map( m => m.key ).indexOf( _key );
         // upsert the rule if the content has changed
         if ( index === -1 || $this.data.messages[ index ].content !== content ) {
@@ -506,7 +505,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
         resolve();
       } );
     };
-    this.pipeline.push( { id: uuid(), stage: "rule", promise } );
+    this.pipeline.push( { id: this.storage.newId(), stage: "rule", promise } );
     return this;
   }
 
@@ -525,14 +524,14 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
   /**
    * manually call a function within the DSL
    */
-  call( name: string, args?: { [ key: string ]: any; }, id: string = uuid() ) {
+  call( name: string, args?: { [ key: string ]: any; }, id: string = this.storage.newId() ) {
     const promise = ( $this: DSL<O, L, M> ) => {
       return new Promise<void>( ( resolve, reject ) => {
         if ( !$this.functions[ name ] ) {
           return reject( `function not found: ${ name }` );
         }
         // add a new message representing the function was called
-        const messageId = uuid();
+        const messageId = this.storage.newId();
         const content = `The LLM called function ${ name } with arguments ${ JSON.stringify( args ) }`;
         const functionSize = $this.llm.tokens( content ) + 3;
         const functionCall: Message = {
@@ -569,7 +568,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
             };
           } )
           .finally( () => {
-            const stage = { id: uuid(), stage: name, promise: $this._prompt( $this, { ...$this.options, ...result } as O, id ) };
+            const stage = { id: this.storage.newId(), stage: name, promise: $this._prompt( $this, { ...$this.options, ...result } as O, id ) };
             $this.pipeline.push( stage );
             resolve();
           } );
@@ -582,7 +581,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
   /**
    * directly access the LLM response the latest prompt.
    */
-  response( func: ResponseStage<O, L, M>, id: string = uuid() ) {
+  response( func: ResponseStage<O, L, M>, id: string = this.storage.newId() ) {
     const promise = ( $this: DSL<O, L, M> ) => {
       return func( { response: $this.data.messages[ $this.data.messages.length - 1 ], locals: $this.locals, chat: $this } );
     };
@@ -599,7 +598,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
    * 
    */
   expect( handler: ResponseStage<O, L, M>, ...others: ResponseStage<O, L, M>[] ) {
-    const stageId = uuid();
+    const stageId = this.storage.newId();
     const promise = ( $this: DSL<O, L, M> ) => {
       return new Promise<void>( async ( resolve, reject ) => {
         const handlers = [ handler, ...others ];
@@ -674,15 +673,15 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
           if ( result.loop ) throw new LoopError( result );
 
           // perform the stage
-          this.pipelineCursor += 1;
-          const item = this.pipeline[ this.pipelineCursor ];
+          const item = this.pipeline[ this.pipelineCursor + 1 ];
           if ( item === undefined ) break;
           const { promise, stage, id } = item;
           this.out( { id: id, type: "stage", content: stage } );
           await promise( this );
+          this.pipelineCursor += 1;
         }
       } catch ( e ) {
-        this.out( { id: uuid(), type: "error", error: e } );
+        this.out( { id: this.storage.newId(), type: "error", error: e } );
         error = e;
       } finally {
         this.llm.close();
@@ -716,7 +715,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
   /**
    * 
    */
-  pause( func: ( args: { chat: DSL<O, L, M>, locals: L; } ) => ( void | Promise<void> ), id: string = uuid() ) {
+  pause( func: ( args: { chat: DSL<O, L, M>, locals: L; } ) => ( void | Promise<void> ), id: string = this.storage.newId() ) {
     const promise = ( $this: DSL<O, L, M> ) => {
       return new Promise<void>( async ( resolve, reject ) => {
         const result = func( { locals: $this.locals, chat: $this } );
@@ -750,7 +749,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
     };
     this.pipeline = [
       ...this.pipeline.slice( 0, this.pipelineCursor + 1 ),
-      { id: uuid(), stage: "seek", promise },
+      { id: this.storage.newId(), stage: "seek", promise },
       ...this.pipeline.slice( this.pipelineCursor + 1 )
     ];
     return this;
@@ -774,7 +773,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
       const limit = targetWindowSize - responseSize - messageTokens - ( includeFunctions ? functionTokens.total : 0 );
       const window = $chat.window( { chat: $chat, messages: $chat.data.messages, tokenLimit: limit, key: options.key } );
       const actualWindowSize = $chat.llm.windowTokens( window );
-      const messageId = uuid();
+      const messageId = this.storage.newId();
       const role = options.role || $chat.options.role || "user";
       const message: Message = {
         id: messageId,
@@ -803,7 +802,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
       let isFunction = false;
       let response = "";
       const funcs: Array<Function & { args: string; func: ( args: any ) => Promise<Options | O>; }> = [];
-      const responseId = uuid();
+      const responseId = this.storage.newId();
       try {
         await ( async () => {
           for await ( const chunk of stream ) {
@@ -812,7 +811,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
               if ( func !== undefined ) funcs.push( { ...func, args: chunk.arguments } );
               const content = `The LLM called function ${ chunk.name } with arguments ${ chunk.arguments }`;
               const functionSize = $chat.llm.tokens( content ) + 3;
-              const functionUuid = uuid();
+              const functionUuid = this.storage.newId();
               const functionMessage: Message = {
                 id: functionUuid,
                 role: "system",
@@ -859,7 +858,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
                 if ( func !== undefined ) funcs.push( { ...func, args: args } );
                 isFunction = false;
                 buffer = true;
-                const functionUuid = uuid();
+                const functionUuid = this.storage.newId();
                 const functionMessage: Message = {
                   id: functionUuid,
                   role: "assistant",
@@ -927,7 +926,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
         try {
           params = args !== "" ? JSON.parse( args! ) : {};
         } catch ( error ) {
-          $chat.out( { id: uuid(), type: "error", error } );
+          $chat.out( { id: this.storage.newId(), type: "error", error } );
         }
         let result: O | Options;
         try {
@@ -940,7 +939,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
         }
         result.role = "system";
         result.visibility = options.visibility !== undefined ? options.visibility : Visibility.SYSTEM;
-        const stage = { id: uuid(), stage: name, promise: $chat._prompt( $chat, { ...$chat.options, ...result } as O, prompt || messageId ) };
+        const stage = { id: this.storage.newId(), stage: name, promise: $chat._prompt( $chat, { ...$chat.options, ...result } as O, prompt || messageId ) };
         if ( $chat.pipelineCursor === $chat.pipeline.length ) {
           // end of the chat, just need to push the new stage
           $chat.pipeline.push( stage );

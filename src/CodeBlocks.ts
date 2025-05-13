@@ -4,7 +4,7 @@ import { CodeBlock } from "./Chat";
 const grammar = `
 message     ::= TEXT* WS* ( block ) WS* TEXT* WS* message*  /* Represents a message with zero or more blocks */
 block       ::= "\`\`\`" lang WS* code WS* "\`\`\`"         /* Represents a code block with language specification */
-lang        ::= [\\w]+                                      /* Matches a sequence of word characters for language */
+lang        ::= [\\w:\\-_.@]+                                 /* Matches word characters, hyphens, colons, underscores, and periods */
 code        ::= TEXT*                                       /* Represents the content of a code block */
 WS          ::= [#x20#x09#x0A#x0D]+                         /* Space | Tab | \\n | \\r - Matches one or more whitespace characters */
 TEXT        ::= [^\`] | "\`" [^\`]                          /* Any character except a backtick or a backtick not followed by another backtick */
@@ -31,5 +31,5 @@ export const extract = ( text: string ): CodeBlock[] => {
 
 export const toCodeBlock = ( lang: string, value: any ) => {
   if ( lang.toLowerCase() === "json" && typeof value === "object" ) value = JSON.stringify( value, null, 2 );
-  return `\`\`\`${ lang }\n${ value }\`\`\`\n`;
+  return `\`\`\`${ lang }\n${ value }\n\`\`\`\n`;
 };

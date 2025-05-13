@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import { readFile, writeFile } from "fs";
 import { promisify } from "util";
 import { Chat } from "./Chat";
@@ -6,7 +7,12 @@ import { DSL } from "./DSL";
 const write = promisify( writeFile );
 const read = promisify( readFile );
 
+const defaultIdGenerator = () => {
+  return randomUUID();
+};
+
 export interface ChatStorage extends Object {
+  newId: () => string;
   getById: ( id: string ) => Chat<any> | Promise<Chat<any>>;
   save: ( chat: DSL<any, any, any> ) => Promise<void>;
 }
@@ -16,6 +22,7 @@ interface LocalStorageOptions {
 }
 export const LocalStorage = ( { directory }: LocalStorageOptions ): ChatStorage => {
   const handler: ChatStorage = {
+    newId: defaultIdGenerator,
     getById: ( id: string ): Promise<Chat<any>> => {
       return new Promise<Chat<any>>( ( resolve, reject ) => {
         read( `${ directory }/${ id }.json` )
@@ -38,6 +45,7 @@ export const LocalStorage = ( { directory }: LocalStorageOptions ): ChatStorage 
 };
 
 export const NoStorage: ChatStorage = {
+  newId: defaultIdGenerator,
   getById: function ( id: string ): Promise<Chat<any>> {
     throw 'Not Implemented - Choose an alternative storage engine';
   },

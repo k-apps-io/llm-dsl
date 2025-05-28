@@ -273,10 +273,11 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
     if ( this.pipelineCursor === -1 ) {
       this.pipeline.push( stage );
     } else {
+      const currentStageIndex = this.pipelineCursor + 1;
       this.pipeline = [
-        ...this.pipeline.slice( 0, this.pipelineCursor + 1 ), // 0 to the current stage inclusive
+        ...this.pipeline.slice( 0, currentStageIndex + 1 ), // 0 to the current stage inclusive
         stage,
-        ...this.pipeline.slice( this.pipelineCursor + 1 ) // the next stage to the end
+        ...this.pipeline.slice( currentStageIndex + 1 ) // the next stage to the end
       ];
     }
     return this;
@@ -344,10 +345,11 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
           .map( p => {
             return { id: this.storage.newId(), stage: "prompt", promise: $this._prompt( $this, { ...$this.options, ...p } as O ) };
           } );
+        const currentStageIndex = $this.pipelineCursor + 1;
         $this.pipeline = [
-          ...$this.pipeline.slice( 0, $this.pipelineCursor + 1 ),
+          ...$this.pipeline.slice( 0, currentStageIndex + 1 ),
           ...promises,
-          ...$this.pipeline.slice( $this.pipelineCursor + 1 )
+          ...$this.pipeline.slice( currentStageIndex + 1 )
         ];
         resolve();
       } );
@@ -374,10 +376,11 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
           reject( "branchForEach requires a join()" );
           return;
         }
+        const currentStageIndex = $this.pipelineCursor + 1;
         $this.pipeline = [
-          ...$this.pipeline.slice( 0, $this.pipelineCursor + 1 ),
-          ...promises.flatMap( p => [ p, ...$this.pipeline.slice( $this.pipelineCursor + 1, joinIndex + $this.pipelineCursor ) ] ),
-          ...$this.pipeline.slice( joinIndex + $this.pipelineCursor + 1 )
+          ...$this.pipeline.slice( 0, currentStageIndex + 1 ),
+          ...promises.flatMap( p => [ p, ...$this.pipeline.slice( currentStageIndex + 1, joinIndex + currentStageIndex ) ] ),
+          ...$this.pipeline.slice( joinIndex + currentStageIndex + 1 )
         ];
         resolve();
       } );
@@ -747,10 +750,11 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
         resolve();
       } );
     };
+    const currentStageIndex = this.pipelineCursor + 1;
     this.pipeline = [
-      ...this.pipeline.slice( 0, this.pipelineCursor + 1 ),
+      ...this.pipeline.slice( 0, currentStageIndex + 1 ),
       { id: this.storage.newId(), stage: "seek", promise },
-      ...this.pipeline.slice( this.pipelineCursor + 1 )
+      ...this.pipeline.slice( currentStageIndex + 1 )
     ];
     return this;
   }

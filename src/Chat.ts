@@ -21,11 +21,13 @@ export interface CodeBlock {
   code: string;
 }
 
+export type Content = null | any | Content[];
+
 /**
  * Interface representing a message.
  * @interface
  */
-export interface Message {
+export interface Message<C = any> extends Record<string, any> {
   /** 
    * Unique identifier of the message (optional).
    * @type {string}
@@ -36,7 +38,7 @@ export interface Message {
    * The role authoring the message.
    * @type {"user" | "assistant" | "system"}
    */
-  role: "user" | "assistant" | "system";
+  role: "user" | "assistant" | "system" | "tool";
 
   /**
    * The key of the message (optional).
@@ -48,7 +50,7 @@ export interface Message {
    * The content of the message.
    * @type {string}
    */
-  content: string;
+  content?: C;
 
   /**
    * The visibility status of the message.

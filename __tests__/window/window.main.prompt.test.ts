@@ -1,5 +1,5 @@
-import { ChatGPT } from "@k-apps-io/llm-dsl-chatgpt";
 import { DSL, localFileStorage, localFileStream } from "../../src";
+import { ChatGPT } from "../ChatGPT";
 
 describe( "window.main.prompt", () => {
   it( "window.main.prompt", async () => {
@@ -8,15 +8,15 @@ describe( "window.main.prompt", () => {
     } );
     const $chat = await chat
       .prompt( {
-        message: "Hello World!",
+        content: "Hello World!",
         key: "1"
       } )
       .prompt( {
-        message: "I'm doing greate",
+        content: "I'm doing greate",
         key: "2"
       } )
       .prompt( {
-        message: "I'm not doing well",
+        content: "I'm not doing well",
         key: "2"
       } )
       .stream( localFileStream( { directory: __dirname, filename: "window.main.prompt", append: false } ) );

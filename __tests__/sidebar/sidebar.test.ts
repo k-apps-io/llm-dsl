@@ -1,7 +1,7 @@
-import { ChatGPT, Options } from "@k-apps-io/llm-dsl-chatgpt";
 import { v4 as uuid } from "uuid";
 import { DSL, Locals } from "../../src/DSL";
 import { CODE_BLOCK_RULE } from "../../src/Rules";
+import { ChatGPT, Options } from "../ChatGPT";
 
 interface L extends Locals {
   key: string;
@@ -20,7 +20,7 @@ chat
       type: "object",
       properties: {}
     },
-    func: () => new Promise<Options>( ( resolve, reject ) => resolve( { message: "success" } ) )
+    func: () => new Promise<Options>( ( resolve, reject ) => resolve( { content: "success" } ) )
   } )
   .setLocals( {
     key: uuid()

@@ -1,6 +1,6 @@
-import { ChatGPT, Options } from "@k-apps-io/llm-dsl-chatgpt";
 import { Visibility, localFileStream } from "../../src";
 import { DSL } from "../../src/DSL";
+import { ChatGPT, Options } from "../ChatGPT";
 import { getRandomNumber } from "../utilities";
 
 const chat = new DSL<Options, any, undefined>( {
@@ -18,11 +18,11 @@ describe( "push", () => {
     await $chat
       .push( {
         key: "1",
-        message: "this is the first message"
+        content: "this is the first message"
       } )
       .push( {
         key: "2",
-        message: "this is the second message"
+        content: "this is the second message"
       } )
       .stream( localFileStream( { directory: __dirname, filename: 'pushing2' } ) );
 
@@ -40,7 +40,7 @@ describe( "push", () => {
     for ( let index = 0; index <= num; index++ ) {
       $chat.push( {
         key: String( index ),
-        message: `this is message #${ index }`
+        content: `this is message #${ index }`
       } );
     }
     await $chat
@@ -59,15 +59,15 @@ describe( "push", () => {
     await $chat
       .push( {
         key: "1",
-        message: "today is not a good day"
+        content: "today is not a good day"
       } )
       .prompt( {
         key: "2",
-        message: "Can you tell me a joke"
+        content: "Can you tell me a joke"
       } )
       .push( {
         key: "3",
-        message: "that was funny"
+        content: "that was funny"
       } )
       .stream( localFileStream( { directory: __dirname, filename: 'promptingWithPush' } ) );
 
@@ -87,16 +87,16 @@ describe( "push", () => {
     await $chat
       .push( {
         key: "1",
-        message: "Please reverse the order of the characters for the following value"
+        content: "Please reverse the order of the characters for the following value"
       } )
       .promptForEach( () => {
         return [ "Jon Snow", "Game of Thrones" ].map( value => ( {
-          message: `${ value }`
+          content: `${ value }`
         } ) );
       } )
       .push( {
         key: "3",
-        message: "the final message"
+        content: "the final message"
       } )
       .stream( localFileStream( { directory: __dirname, filename: 'promptForEach' } ) );
 
@@ -120,17 +120,17 @@ describe( "push", () => {
     await $chat
       .push( {
         key: "1",
-        message: "reverse the order of the characters of the following value."
+        content: "reverse the order of the characters of the following value."
       } )
       .branchForEach( () => {
         return testWords.map( value => ( {
           key: "value",
-          message: `${ value }`
+          content: `${ value }`
         } ) );
       } )
       .push( {
         key: "pushedMessage",
-        message: "Thanks",
+        content: "Thanks",
         visibility: Visibility.EXCLUDE
       } )
       .join()
@@ -150,7 +150,7 @@ describe( "push", () => {
     await $chat
       .pause( ( { chat: $this } ) => new Promise<void>( ( resolve, reject ) => {
         $this.push( {
-          message: "this was pushed within a pause",
+          content: "this was pushed within a pause",
         } );
         resolve();
       } ) )
@@ -172,7 +172,7 @@ describe( "push", () => {
       } )
       .pause( ( { chat: $this } ) => new Promise<void>( ( resolve, reject ) => {
         $this.push( {
-          message: "this was pushed within a pause",
+          content: "this was pushed within a pause",
         } );
         resolve();
       } ) )

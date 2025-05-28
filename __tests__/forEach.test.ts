@@ -1,11 +1,10 @@
-import { ChatGPT, Options } from "@k-apps-io/llm-dsl-chatgpt";
 import { DSL } from "../src/DSL";
-import { stdout } from "../src/Stream";
+import { ChatGPT, Options } from "./ChatGPT";
 
 describe( "forEach", () => {
   it( 'single prompt', async () => {
     const chat = new DSL<Options, any, undefined>( {
-      llm: new ChatGPT( { model: "gpt-3.5-turbo" } )
+      llm: new ChatGPT( { model: "gpt-4o-mini" } )
     } );
     const jsonArray = [
       { city: "New York" },
@@ -18,14 +17,14 @@ describe( "forEach", () => {
       .forEach( jsonArray, ( { chat: $chat, item } ) => {
         $chat
           .prompt( {
-            message: `What is the population of ${ item.city }?`,
+            content: `What is the population of ${ item.city }?`,
             key: item.city
           } );
       } )
-      .stream( stdout() );
+      .execute();
     const messages = chat.data.messages;
     expect( messages.length ).toBe( 8 );
-    const actualLean = messages.map( m => ( { key: m.key, content: m.role === "user" ? m.content : undefined, role: m.role } ) );
+    const actualLean = messages.map( m => ( { key: m.key, content: m.role === "user" ? m.content.content : undefined, role: m.role } ) );
     const exepctedLean = [
       { key: "New York", content: "What is the population of New York?", role: "user" },
       { key: undefined, content: undefined, role: "assistant" },
@@ -41,7 +40,7 @@ describe( "forEach", () => {
 
   it( 'multiple prompts', async () => {
     const chat = new DSL<Options, any, undefined>( {
-      llm: new ChatGPT( { model: "gpt-3.5-turbo" } )
+      llm: new ChatGPT( { model: "gpt-4o-mini" } )
     } );
     const jsonArray = [
       { city: "New York" },
@@ -54,18 +53,18 @@ describe( "forEach", () => {
       .forEach( jsonArray, ( { chat: $chat, item } ) => {
         $chat
           .prompt( {
-            message: `What is the population of ${ item.city }?`,
-            key: `${ item.city }-population`
+            content: `What is the population of ${ item.city }?`,
+            key: `${ item.city }-population`,
           } )
           .prompt( {
-            message: `What is the area of ${ item.city }?`,
+            content: `What is the area of ${ item.city }?`,
             key: `${ item.city }-area`
           } );
       } )
-      .stream( stdout() );
+      .execute();
     const messages = chat.data.messages;
     expect( messages.length ).toBe( 16 );
-    const actualLean = messages.map( m => ( { key: m.key, content: m.role === "user" ? m.content : undefined, role: m.role } ) );
+    const actualLean = messages.map( m => ( { key: m.key, content: m.role === "user" ? m.content.content : undefined, role: m.role } ) );
     const exepctedLean = [
       { key: "New York-population", content: "What is the population of New York?", role: "user" },
       { key: undefined, content: undefined, role: "assistant" },

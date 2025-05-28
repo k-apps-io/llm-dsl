@@ -1,5 +1,5 @@
-import { ChatGPT, Options } from "@k-apps-io/llm-dsl-chatgpt";
 import { DSL } from "../src/DSL";
+import { ChatGPT, Options } from "./ChatGPT";
 
 describe( "arguments", () => {
   it( "should exit triage b/c locals.jira is not defined", async () => {
@@ -19,7 +19,7 @@ describe( "arguments", () => {
         ok();
       } );
     } ).prompt( ( { locals } ) => ( {
-      message: `Please triage the following Jira issue: ${ locals.jira }`
+      content: `Please triage the following Jira issue: ${ locals.jira }`
     } ) )
       .execute()
       .then( () => {
@@ -49,7 +49,7 @@ describe( "arguments", () => {
         } );
       } )
       .prompt( ( { locals } ) => ( {
-        message: `Please triage the following Jira issue: ${ locals.jira }`
+        content: `Please triage the following Jira issue: ${ locals.jira }`
       } ) )
       .execute();
     const messages = chat.data.messages;
@@ -76,7 +76,7 @@ describe( "arguments", () => {
       } );
     } )
       .prompt( ( { locals } ) => ( {
-        message: `Please triage the following Jira issue: ${ locals.jira }`
+        content: `Please triage the following Jira issue: ${ locals.jira }`
       } ) );
 
     const clonedChat = chat.clone( { startAt: "beginning" } );

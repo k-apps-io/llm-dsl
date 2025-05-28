@@ -1,5 +1,5 @@
-import { ChatGPT } from "@k-apps-io/llm-dsl-chatgpt";
 import { CODE_BLOCK_RULE, DSL, localFileStorage, localFileStream } from "../../src";
+import { ChatGPT } from "../ChatGPT";
 
 describe( "window.main.promptForEach", () => {
   it( "window.main.promptForEach", async () => {
@@ -8,12 +8,12 @@ describe( "window.main.promptForEach", () => {
     } );
     const $chat = await chat
       .push( {
-        message: "Help me generate a hello world program."
+        content: "Help me generate a hello world program."
       } )
       .rule( CODE_BLOCK_RULE )
       .promptForEach( () => {
         return [ "javascript", "python", "C++" ].map( lang => ( {
-          message: `use ${ lang }`,
+          content: `use ${ lang }`,
           key: "1"
         } ) );
       } )

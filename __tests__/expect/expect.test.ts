@@ -1,8 +1,8 @@
-import { ChatGPT, Options } from "@k-apps-io/llm-dsl-chatgpt";
 import { DSL } from "../../src/DSL";
 import { json } from "../../src/Expect";
 import { CODE_BLOCK_RULE } from "../../src/Rules";
 import { localFileStorage, localFileStream } from "../../src/Stream";
+import { ChatGPT, Options } from "../ChatGPT";
 
 
 describe( ".expect", () => {
@@ -16,7 +16,7 @@ describe( ".expect", () => {
     await chat
       .rule( CODE_BLOCK_RULE )
       .prompt( {
-        message: `
+        content: `
           generate a JSON Array of 2 city names
         `
       } )
@@ -44,7 +44,7 @@ describe( ".expect", () => {
     const $chat = chat
       .rule( CODE_BLOCK_RULE )
       .prompt( {
-        message: "generate a JSON Array of city names"
+        content: "generate a JSON Array of city names"
       } )
       .expect( response => new Promise<void>( ( resolve, reject ) => {
         reject( "I need different cities" );

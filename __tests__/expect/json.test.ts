@@ -1,9 +1,9 @@
-import { ChatGPT, Options } from "@k-apps-io/llm-dsl-chatgpt";
 import { Message } from "../../src/Chat";
 import { extract, toCodeBlock } from "../../src/CodeBlocks";
 import { DSL } from "../../src/DSL";
 import { json } from "../../src/Expect";
 import { Visibility, latest } from "../../src/Window";
+import { ChatGPT, Options } from "../ChatGPT";
 
 describe( ".expect", () => {
 

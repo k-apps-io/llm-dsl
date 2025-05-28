@@ -1,7 +1,8 @@
-import { ChatGPT, Options } from "@k-apps-io/llm-dsl-chatgpt";
+import { toCodeBlock } from "../../src";
 import { DSL, Locals } from "../../src/DSL";
 import { LocalStorage } from "../../src/Storage";
 import { localFileStorage, localFileStream } from "../../src/Stream";
+import { ChatGPT, Options } from "../ChatGPT";
 interface ChatLocals extends Locals {
   wasCalled: boolean;
 }
@@ -29,9 +30,9 @@ describe( ".function", () => {
             }
           }
         },
-        description: "helps the AI model determine the current weather",
-        func: ( { unit = "Fahrenheit", locals, chat: $this } ) => {
-          return new Promise( ( resolve, reject ) => {
+        description: "helps the AI model determine the current weather for the users current location",
+        func: ( { unit = "Fahrenheit", locals, tool_call_id } ) => {
+          return new Promise( ( resolve ) => {
             locals.wasCalled = true;
             const weather = {
               temperature: unit === "Fahrenheit" ? 24 : 5,
@@ -39,8 +40,9 @@ describe( ".function", () => {
               percipitation: "it's snowing"
             };
             resolve( {
-              message: `here is the current weather report \`\`\`json ${ JSON.stringify( weather ) }\`\`\``,
-              functions: false
+              role: "tool",
+              tool_call_id,
+              content: toCodeBlock( "json", JSON.stringify( weather ) ),
             } );
           } );
         }
@@ -50,8 +52,7 @@ describe( ".function", () => {
         requirement: "all temperature readings must be in Celsius"
       } )
       .prompt( {
-        message: "what's the weather like today?",
-        function_call: { name: "getTheCurrentWeather" }
+        content: "what's the weather like today?",
       } )
       .response( ( { response, locals, chat: $this } ) => {
         return new Promise<void>( ( resolve, reject ) => {
@@ -62,8 +63,8 @@ describe( ".function", () => {
           resolve();
         } );
       } )
-      .stream( localFileStream( { directory: __dirname, filename: 'function' } ) );
-    localFileStorage( { directory: __dirname, chat: $chat, filename: 'function' } );
+      .stream( localFileStream( { directory: __dirname, filename: 'expectFunctionCall' } ) );
+    localFileStorage( { directory: __dirname, chat: $chat, filename: 'expectFunctionCall' } );
     expect( $chat.locals.wasCalled ).toBeTruthy();
   }, 60000 );
 
@@ -81,7 +82,7 @@ describe( ".function", () => {
           return new Promise( ( resolve, reject ) => {
             locals.wasCalled = true;
             resolve( {
-              message: `hello`,
+              content: `hello`,
               functions: false
             } );
           } );

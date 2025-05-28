@@ -1,7 +1,7 @@
-import { ChatGPT, Options } from "@k-apps-io/llm-dsl-chatgpt";
 import { Message } from "../../src/Chat";
 import { DSL } from "../../src/DSL";
 import { Visibility, main } from "../../src/Window";
+import { ChatGPT, Options } from "../ChatGPT";
 
 const chat = new DSL<Options, any, any>( {
   llm: new ChatGPT( { model: "gpt-3.5-turbo" } )

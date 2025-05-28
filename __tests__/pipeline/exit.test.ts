@@ -1,6 +1,6 @@
-import { ChatGPT, Options } from "@k-apps-io/llm-dsl-chatgpt";
 import { DSL, Locals } from "../../src/DSL";
 import { localFileStream } from "../../src/Stream";
+import { ChatGPT, Options } from "../ChatGPT";
 
 interface L extends Locals {
   key: string;
@@ -18,7 +18,7 @@ describe( "pipeline.exit", () => {
     const $chat = await chat
       .clone()
       .prompt( {
-        message: "hello!"
+        content: "hello!"
       }, "1" )
       .response( ( { chat: $this } ) => {
         return new Promise<void>( ( resolve, reject ) => {
@@ -27,18 +27,18 @@ describe( "pipeline.exit", () => {
         } );
       } )
       .prompt( {
-        message: "goodbye."
+        content: "goodbye."
       }, "3" )
       .stream( localFileStream( { directory: __dirname, filename: "exit.ok.test" } ) );
     expect( $chat.data.messages.length ).toBe( 2 );
     expect( $chat.exitCode ).toBe( 1 );
-  } );
+  }, 60000 );
 
   it( "exit with Error", async () => {
     const $chat = chat
       .clone()
       .prompt( {
-        message: "hello!"
+        content: "hello!"
       }, "1" )
       .response( ( { chat: $this } ) => {
         return new Promise<void>( ( resolve, reject ) => {
@@ -47,11 +47,11 @@ describe( "pipeline.exit", () => {
         } );
       } )
       .prompt( {
-        message: "goodbye."
+        content: "goodbye."
       }, "3" )
       .stream( localFileStream( { directory: __dirname, filename: "exit.error.test" } ) );
 
     await expect( $chat ).rejects.toThrow();
-  } );
+  }, 60000 );
 
 } );

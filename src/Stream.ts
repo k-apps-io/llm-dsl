@@ -61,7 +61,7 @@ export const stdout = (): StreamHandler => {
 
     // write a message if it's not associated with a response
     if ( ( chunk.type === "message" && chunk.id !== id ) ) process.stdout.write( chunk.content );
-    if ( ( chunk.type === "response" ) ) process.stdout.write( chunk.content );
+    if ( ( chunk.type === "response" ) ) process.stdout.write( JSON.stringify( chunk.content, null, 2 ) );
     if ( chunk.type === "error" ) process.stderr.write( String( chunk.error ) );
 
     if ( id === undefined || chunk.id !== id ) {
@@ -121,7 +121,10 @@ export const localFileStream = ( { directory, filename, append, timestamps }: Lo
       if ( timestamps ) line += ` ${ new Date() }`;
       fileStream.write( line );
     }
-    if ( ( chunk.type === "message" ) ) fileStream.write( chunk.content );
+    if ( ( chunk.type === "message" ) ) {
+      const content = typeof chunk.content === "string" ? chunk.content : JSON.stringify( chunk.content, null, 2 );
+      fileStream.write( content );
+    }
     if ( chunk.type === "error" ) fileStream.write( String( chunk.error ) );
   };
   return handler;

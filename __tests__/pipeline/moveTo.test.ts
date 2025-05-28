@@ -1,6 +1,6 @@
-import { ChatGPT, Options } from "@k-apps-io/llm-dsl-chatgpt";
 import { DSL, Locals } from "../../src/DSL";
 import { localFileStorage, localFileStream } from "../../src/Stream";
+import { ChatGPT, Options } from "../ChatGPT";
 
 interface L extends Locals {
   key: string;
@@ -17,7 +17,7 @@ describe( "pipeline.move", () => {
     const $chat = await chat
       .clone()
       .prompt( {
-        message: "hello!"
+        content: "hello!"
       }, "1" )
       .response( ( { chat } ) => {
         return new Promise<void>( ( resolve, reject ) => {
@@ -26,23 +26,24 @@ describe( "pipeline.move", () => {
         } );
       } )
       .prompt( {
-        message: "love ya"
+        content: "love ya"
       }, "3" )
       .prompt( {
-        message: "goodbye."
+        content: "goodbye."
       }, "4" )
       .stream( localFileStream( { directory: __dirname, filename: "move.forward.1", append: false } ) );
     localFileStorage( { directory: __dirname, filename: "move.forward.1", chat: $chat } );
     expect( $chat.data.messages.length ).toBe( 4 ); // x2 for each prompt
   }, 60000 );
+
   it( "forward 2", async () => {
     const $chat = await chat
       .clone()
       .prompt( {
-        message: "hello!"
+        content: "hello!"
       }, "1" )
       .prompt( {
-        message: "tell me a joke"
+        content: "tell me a joke"
       }, "3" )
       .response( ( { chat } ) => {
         return new Promise<void>( ( resolve, reject ) => {
@@ -51,13 +52,13 @@ describe( "pipeline.move", () => {
         } );
       } )
       .prompt( {
-        message: "I liked that. tell me another please."
+        content: "I liked that. tell me another please."
       }, "4" )
       .prompt( {
-        message: "I liked that. tell me another please."
+        content: "I liked that. tell me another please."
       }, "5" )
       .prompt( {
-        message: "goodbye."
+        content: "goodbye."
       }, "6" )
       .stream( localFileStream( { directory: __dirname, filename: "move.forward.2", append: false } ) );
     localFileStorage( { directory: __dirname, filename: "move.forward.2", chat: $chat } );

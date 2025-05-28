@@ -3,7 +3,7 @@ import { cloneDeep } from "lodash";
 import { Chat, Message } from "./Chat";
 import { extract } from "./CodeBlocks";
 import { ResponseStage } from "./Expect";
-import { Function, LLM, Prompt } from "./LLM";
+import { Function, LLM, StreamMessage } from "./LLM";
 import { Rule } from "./Rules";
 import { ChatStorage, NoStorage } from "./Storage";
 import { Chunk, StreamHandler } from "./Stream";
@@ -29,11 +29,8 @@ type ForEachArgs<O extends Options, L extends Locals, M extends Metadata> = Stag
 };
 type ForEach<O extends Options, L extends Locals, M extends Metadata, F> = ( args: ForEachArgs<O, L, M> ) => void;
 
-export interface Options {
-  /**
-   * the text message to send to the LLM
-   */
-  message: string;
+export interface Options<T = any> {
+  content: T;
   /**
    * an optional key that identifies the prompt. If the key is re-used the latest 
    * prompt will overwrite the prior
@@ -57,7 +54,7 @@ export interface Options {
    */
   functions?: false;
 
-  role?: Prompt[ "role" ];
+  role?: StreamMessage[ "role" ];
 }
 
 export interface Locals {
@@ -255,7 +252,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
       const messageId = this.storage.newId();
       const _options: ( Options | O ) = typeof options === "function" ? options( { locals: $this.locals, chat: $this } ) : options;
       const visibility = _options.visibility !== undefined ? _options.visibility : Visibility.OPTIONAL;
-      const content = _options.message.replaceAll( /\n\s+(\w)/gmi, '\n$1' ).trim();
+      const content = $this.llm.prepareContent( _options );
       const message: Message = {
         id: messageId,
         key: _options.key,
@@ -295,7 +292,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
       const messageId = this.storage.newId();
       const _options: ( Options | O ) = typeof options === "function" ? options( { locals: $this.locals, chat: $this } ) : options;
       const visibility = _options.visibility !== undefined ? _options.visibility : Visibility.OPTIONAL;
-      const content = _options.message.replaceAll( /\n\s+(\w)/gmi, '\n$1' ).trim();
+      const content = $this.llm.prepareContent( _options );
       const message: Message = {
         id: messageId,
         key: _options.key,
@@ -504,7 +501,10 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
             id: ruleId,
             role: role || "system",
             key: _key,
-            content: content,
+            content: {
+              content,
+              role: role || "system",
+            },
             size: $this.llm.tokens( content ) + 3,
             visibility: Visibility.REQUIRED,
             createdAt: new Date(),
@@ -525,7 +525,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
    * @param options 
    * @returns {object} - the chat object
    */
-  function<F>( options: Function & { func: ( args: F & { locals: L, chat: DSL<O, L, M>; } ) => Promise<Options | O>; } ) {
+  function<F>( options: Function & { func: ( args: F & { locals: L, chat: DSL<O, L, M>; tool_call_id?: string; } ) => Promise<Options | O>; } ) {
     const { name } = options;
     this.functions[ name ] = { ...options, calls: 0 };
     return this;
@@ -566,13 +566,13 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
         func( { ...args, locals: $this.locals, chat: $this } )
           .then( _result => {
             result = _result;
-            result.message = `${ result.message.replaceAll( /\n\s+(\w)/gmi, '\n$1' ).trim() }`;
+            result.content = $this.llm.prepareContent( _result );
             result.role = "system";
             result.visibility = result.visibility !== undefined ? result.visibility : Visibility.SYSTEM;
           } )
           .catch( error => {
             result = {
-              message: `${ error }`,
+              content: String( error ),
               role: "system",
               visibility: Visibility.SYSTEM
             };
@@ -633,9 +633,8 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
                   ...$this.options,
                   role: "system",
                   visibility: Visibility.SYSTEM,
-                  message: expectation
-                } as O
-                )
+                  content: expectation
+                } as unknown as O )
               },
               ...$this.pipeline.slice( $this.pipelineCursor )
             ];
@@ -755,7 +754,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
         }
         // apply the prior index b/c the execute process auto increments the
         // pipelineCursor by 1 before each stage
-        $this.pipelineCursor = index - 1;
+        $this.pipelineCursor = index - 2;
         resolve();
       } );
     };
@@ -797,18 +796,18 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
       const includeFunctions = options.functions === undefined;
       const functions = includeFunctions ? Object.keys( $chat.functions ).map( k => $chat.functions[ k ] ) : [];
       const functionTokens = $chat.llm.functionTokens( functions );
-
-      const messageTokens = $chat.llm.tokens( options.message );
+      options.content = $chat.llm.prepareContent( options );
+      const messageTokens = $chat.llm.tokens( options.content );
       const limit = targetWindowSize - responseSize - messageTokens - ( includeFunctions ? functionTokens.total : 0 );
       const window = $chat.window( { chat: $chat, messages: $chat.data.messages, tokenLimit: limit, key: options.key } );
       const actualWindowSize = $chat.llm.windowTokens( window );
       const messageId = this.storage.newId();
-      const role = options.role || $chat.options.role || "user";
+      options.role = options.role || $chat.options.role || "user";
+      const _options = { ...$chat.options, ...options, responseSize, visibility };
       const message: Message = {
         id: messageId,
         key: options.key,
-        role: role,
-        content: options.message.replaceAll( /\n\s+(\w)/gmi, '\n$1' ).trim(),
+        role: options.role,
         size: messageTokens,
         visibility: visibility,
         window: window.map( ( { id } ) => id! ),
@@ -816,35 +815,34 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
         functions: functions.length === 0 ? undefined : functionTokens,
         user: $chat.user,
         createdAt: new Date(),
-        prompt: prompt || messageId
+        prompt: prompt || messageId,
+        content: _options
       };
       $chat.data.messages.push( message );
       $chat.out( { ...message, type: "message", chat: $chat.data.id! } );
-      const _options = { ...$chat.options, ...options, responseSize, visibility };
       const stream = $chat.llm.stream( {
-        messages: [ ...window.map( m => ( { prompt: m.content, role: m.role } ) ), { prompt: options.message, role } ],
+        messages: [ ...window.map( m => m.content ), _options ],
         functions: functions,
         user: $chat.user,
         ..._options
       } );
       let buffer = true;
-      let isFunction = false;
       let response = "";
-      const funcs: Array<Function & { args: string; func: ( args: any ) => Promise<Options | O>; }> = [];
+      const funcs: Array<Function & { args: string; func: ( args: any ) => Promise<Options | O>; tool_call_id?: string; }> = [];
       const responseId = this.storage.newId();
       try {
         await ( async () => {
           for await ( const chunk of stream ) {
             if ( chunk.type === "function" ) {
               const func = $chat.functions[ chunk.name! ];
-              if ( func !== undefined ) funcs.push( { ...func, args: chunk.arguments } );
-              const content = `The LLM called function ${ chunk.name } with arguments ${ chunk.arguments }`;
-              const functionSize = $chat.llm.tokens( content ) + 3;
+              if ( func !== undefined ) funcs.push( { ...func, args: chunk.arguments, tool_call_id: chunk.id } );
+              const functionSize = 0; // todo 
               const functionUuid = this.storage.newId();
               const functionMessage: Message = {
                 id: functionUuid,
                 role: "system",
-                content: content,
+                content: chunk.message,
+                functions: undefined,
                 size: functionSize,
                 visibility: options.visibility !== undefined ? options.visibility : Visibility.SYSTEM,
                 createdAt: new Date(),
@@ -859,47 +857,16 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
             } else if ( buffer ) {
               response += chunk.content;
               if ( response.length >= 5 ) {
-                if ( response.startsWith( "call:" ) ) {
-                  // sometimes the llm will not send a function chunk but stream
-                  // this as a normal chunk. Setting the flag = True to handle the function
-                  isFunction = true;
-                } else {
-                  $chat.out( {
-                    id: responseId,
-                    type: "response",
-                    role: "assistant",
-                    content: response,
-                    chat: $chat.data.id!,
-                    visibility: Visibility.OPTIONAL,
-                    prompt: prompt || messageId
-                  } );
-                }
-                buffer = false;
-              }
-            } else if ( isFunction ) {
-              response += chunk.content.trim();
-              const functionNames = Object.keys( $chat.functions );
-              const match = response.match( new RegExp( `(${ functionNames.join( "|" ) })\((.+?)\)`, "gi" ) );
-              if ( match ) {
-                const name = match[ 1 ];
-                const args = match[ 2 ];
-                const func = $chat.functions[ name ];
-                if ( func !== undefined ) funcs.push( { ...func, args: args } );
-                isFunction = false;
-                buffer = true;
-                const functionUuid = this.storage.newId();
-                const functionMessage: Message = {
-                  id: functionUuid,
+                $chat.out( {
+                  id: responseId,
+                  type: "response",
                   role: "assistant",
                   content: response,
-                  size: $chat.llm.tokens( response ) + 3,
-                  visibility: options.visibility !== undefined ? options.visibility : Visibility.SYSTEM,
-                  createdAt: new Date(),
+                  chat: $chat.data.id!,
+                  visibility: Visibility.OPTIONAL,
                   prompt: prompt || messageId
-                };
-                $chat.data.messages.push( functionMessage );
-                $chat.out( { ...functionMessage, chat: $chat.data.id!, type: "message" } );
-                response = "";
+                } );
+                buffer = false;
               }
             } else {
               response += chunk.content;
@@ -926,7 +893,10 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
         const responseMessage: Message = {
           id: responseId,
           role: "assistant",
-          content: response,
+          content: {
+            content: response,
+            role: "assistant",
+          },
           size: responseSize,
           visibility: Visibility.OPTIONAL,
           codeBlocks: blocks.length > 0 ? blocks : undefined,
@@ -937,9 +907,9 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
         $chat.out( { ...responseMessage, type: "message", chat: $chat.data.id! } );
       }
 
-      // evaluate the functions is one was called;
+      // evaluate the functions if one was called;
       let position = 1;
-      const currentStage = $chat.pipeline[ $chat.pipelineCursor ].stage;
+      const currentStage = $chat.pipeline[ $chat.pipelineCursor ]?.stage;
       for ( const func of funcs ) {
         const { func: promise, parameters, name, args } = func!;
         const calls = $chat.functions[ name ].calls;
@@ -959,25 +929,26 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
         }
         let result: O | Options;
         try {
-          result = await promise( { ...params, locals: $chat.locals, chat: $chat } );
-          result.message = `${ result.message.replaceAll( /\n\s+(\w)/gmi, '\n$1' ).trim() }`;
+          result = await promise( { ...params, locals: $chat.locals, chat: $chat, tool_call_id: func.tool_call_id } );
+          result.content = $chat.llm.prepareContent( result );
         } catch ( error ) {
           result = {
-            message: `${ error }`
+            content: `${ error }`
           };
         }
-        result.role = "system";
+        result.role = "tool";
         result.visibility = options.visibility !== undefined ? options.visibility : Visibility.SYSTEM;
         const stage = { id: this.storage.newId(), stage: name, promise: $chat._prompt( $chat, { ...$chat.options, ...result } as O, prompt || messageId ) };
-        if ( $chat.pipelineCursor === $chat.pipeline.length ) {
+        const currentStageIndex = $chat.pipelineCursor + 1;
+        if ( currentStageIndex >= $chat.pipeline.length ) {
           // end of the chat, just need to push the new stage
           $chat.pipeline.push( stage );
         } else {
           // middle of pipeline, we need to insert the stage in the current position and shift all subsequent stages
           $chat.pipeline = [
-            ...$chat.pipeline.slice( 0, $chat.pipelineCursor + position ),
+            ...$chat.pipeline.slice( 0, currentStageIndex + position + 1 ),
             stage,
-            ...$chat.pipeline.slice( $chat.pipelineCursor + position )
+            ...$chat.pipeline.slice( currentStageIndex + position + 1 )
           ];
         }
         position += 1;

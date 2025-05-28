@@ -14,7 +14,7 @@ const config: Config.InitialOptions = {
     '/node_modules/',
     '/__tests__/',
     '/test/',
-    '/src/index.ts', // Ignore the index file
+    '/src/index.ts',
   ],
   setupFilesAfterEnv: [ './jest.setup.ts' ],
   globalTeardown: './jest.teardown.ts',

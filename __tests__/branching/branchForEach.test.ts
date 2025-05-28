@@ -1,7 +1,7 @@
-import { ChatGPT, Options } from "@k-apps-io/llm-dsl-chatgpt";
 import { DSL, Locals } from "../../src/DSL";
 import { CODE_BLOCK_RULE } from "../../src/Rules";
 import { localFileStorage, localFileStream } from "../../src/Stream";
+import { ChatGPT, Options } from "../ChatGPT";
 
 interface ChatLocals extends Locals {
   colors: string[];
@@ -19,7 +19,7 @@ describe( "branchForEach", () => {
         .clone()
         .rule( CODE_BLOCK_RULE )
         .prompt( {
-          message: `generate a list of 10 colors as \`\`\`json {"colors": [] }\`\`\``
+          content: `generate a list of 10 colors as \`\`\`json {"colors": [] }\`\`\``
         } )
         .expect( ( { response, locals } ) => {
           return new Promise<void>( ( ok, expect ) => {
@@ -36,7 +36,7 @@ describe( "branchForEach", () => {
         } )
         .branchForEach( ( { locals } ) => {
           return locals.colors.map( color => ( {
-            message: `write the word '${ color }' backwards as plain text`
+            content: `write the word '${ color }' backwards as plain text`
           } as Options ) );
         } )
         .expect( ( { response } ) => {

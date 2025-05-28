@@ -145,4 +145,45 @@ describe( "push", () => {
     }
   } );
 
+  it( "should push a message within a pause stage", async () => {
+    const $chat = chat.clone();
+    await $chat
+      .pause( ( { chat: $this } ) => new Promise<void>( ( resolve, reject ) => {
+        $this.push( {
+          message: "this was pushed within a pause",
+        } );
+        resolve();
+      } ) )
+      .stream( localFileStream( { directory: __dirname, filename: 'pushingWithinPause' } ) );
+    const expectedStages = [
+      "pause",
+      "push"
+    ];
+    const actualStages = $chat.pipeline.map( stage => stage.stage );
+    expect( actualStages ).toMatchObject( expectedStages );
+  } );
+
+  it( "should push a message within a pause stage in the middle of a pipeline", async () => {
+    const $chat = chat.clone();
+    await $chat
+      .rule( {
+        name: "Test Rule",
+        requirement: "Test",
+      } )
+      .pause( ( { chat: $this } ) => new Promise<void>( ( resolve, reject ) => {
+        $this.push( {
+          message: "this was pushed within a pause",
+        } );
+        resolve();
+      } ) )
+      .stream( localFileStream( { directory: __dirname, filename: 'pushingWithinPause' } ) );
+    const expectedStages = [
+      "rule",
+      "pause",
+      "push"
+    ];
+    const actualStages = $chat.pipeline.map( stage => stage.stage );
+    expect( actualStages ).toMatchObject( expectedStages );
+  } );
+
 } );

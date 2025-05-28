@@ -24,6 +24,10 @@ interface StageFunctionArgs<O extends Options, L extends Locals, M extends Metad
 }
 type StageFunction<O extends Options, L extends Locals, M extends Metadata, F> = ( args: StageFunctionArgs<O, L, M> ) => F;
 
+type ForEachArgs<O extends Options, L extends Locals, M extends Metadata> = StageFunctionArgs<O, L, M> & {
+  item: any;
+};
+type ForEach<O extends Options, L extends Locals, M extends Metadata, F> = ( args: ForEachArgs<O, L, M> ) => void;
 
 export interface Options {
   /**
@@ -71,7 +75,7 @@ const DEFAULT_SETTINGS: Settings = {
   maxCallStack: 10,
 };
 
-export type Metadata = undefined | { [ key: string ]: unknown; };
+export type Metadata = undefined | Record<string, unknown>;
 
 export class DSL<O extends Options, L extends Locals, M extends Metadata> {
 
@@ -133,7 +137,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
       id: this.storage.newId(),
       messages: [],
       sidebars: [],
-      metadata: metadata,
+      metadata: metadata ?? {} as M,
       inputs: 0,
       outputs: 0
     };
@@ -339,6 +343,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
    * @returns {object} - the chat object   
    */
   promptForEach( func: StageFunction<O, L, M, ( Options | O )[]>, id: string = this.storage.newId() ) {
+    console.warn( "Deprecation Warning: 'promptForEach' is deprecated and may be removed in future versions." );
     const promise = ( $this: DSL<O, L, M> ) => {
       return new Promise<void>( ( resolve, reject ) => {
         const promises = func( { locals: $this.locals, chat: $this } )
@@ -366,6 +371,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
    * @returns {object} - the chat object   
    */
   branchForEach( func: StageFunction<O, L, M, ( Options | O )[]>, id: string = this.storage.newId() ) {
+    console.warn( "Deprecation Warning: 'branchForEach' is deprecated and may be removed in future versions." );
     const promise = ( $this: DSL<O, L, M> ) => {
       return new Promise<void>( ( resolve, reject ) => {
         const promises = func( { locals: $this.locals, chat: $this } ).map( p => {
@@ -393,6 +399,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
    * establishes a stopping point for the `branchForEach`
    */
   join( id: string = this.storage.newId() ) {
+    console.warn( "Deprecation Warning: 'join' is deprecated and may be removed in future versions." );
     // see forEachBranch
     this.pipeline.push( { id: id, stage: "join", promise: ( $this: DSL<O, L, M> ) => new Promise<void>( ( resolve ) => resolve() ) } );
     return this;
@@ -655,8 +662,10 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
    * 
    * @returns {Promise}
    */
-  async execute() {
+  async execute( { locals, metadata }: { locals?: L; metadata?: M; } = {} ): Promise<DSL<O, L, M>> {
     return new Promise<DSL<O, L, M>>( async ( resolve, reject ) => {
+      this.locals = { ...this.locals, ...locals };
+      this.data.metadata = { ...this.data.metadata, ...metadata };
       let error: any = undefined;
       try {
         let hasNext = true;
@@ -756,6 +765,22 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
       { id: this.storage.newId(), stage: "seek", promise },
       ...this.pipeline.slice( currentStageIndex + 1 )
     ];
+    return this;
+  }
+
+  forEach<T>( iterable: Iterable<T>, func: ForEach<O, L, M, Options | O>, id: string = this.storage.newId() ) {
+    const promise = ( $this: DSL<O, L, M> ) => new Promise<void>( ( resolve, reject ) => {
+      try {
+        for ( const item of iterable ) {
+          func( { locals: $this.locals, chat: $this, item } );
+        }
+        resolve();
+      } catch ( e ) {
+        return reject( e );
+      }
+    } );
+
+    this.pipeline.push( { id, stage: "forEach", promise } );
     return this;
   }
 

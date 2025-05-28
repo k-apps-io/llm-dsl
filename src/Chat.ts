@@ -144,7 +144,7 @@ export interface Chat<M extends Metadata> {
   /**
    * optional metadata to associate with the chat
    */
-  metadata?: M;
+  metadata: M;
 
   /**
    * the total number of input tokens reviewed by the LLM

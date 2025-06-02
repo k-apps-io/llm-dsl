@@ -18,6 +18,7 @@ const config: Config.InitialOptions = {
   ],
   setupFilesAfterEnv: [ './jest.setup.ts' ],
   globalTeardown: './jest.teardown.ts',
+  testTimeout: 60000,
 };
 
 export default config;

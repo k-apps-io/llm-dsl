@@ -1,23 +1,20 @@
-import { DSL, Locals } from "../../src/DSL";
 import { localFileStorage, localFileStream } from "../../src/Stream";
-import { ChatGPT, Options } from "../ChatGPT";
+import { ChatGPT } from "../ChatGPT";
 
-interface L extends Locals {
-  key: string;
-}
 
-const chat = new DSL<Options, L, undefined>( {
-  llm: new ChatGPT( {
-    timeout: 10000,
-    model: "gpt-3.5-turbo"
-  } )
+const chat = new ChatGPT( {
+  timeout: 10000,
+  model: "gpt-4o-mini"
 } );
 describe( "pipeline.move", () => {
   it( "forward 1", async () => {
     const $chat = await chat
       .clone()
       .prompt( {
-        content: "hello!"
+        prompt: {
+          role: "user",
+          content: "hello!"
+        }
       }, "1" )
       .response( ( { chat } ) => {
         return new Promise<void>( ( resolve, reject ) => {
@@ -26,12 +23,19 @@ describe( "pipeline.move", () => {
         } );
       } )
       .prompt( {
-        content: "love ya"
+        prompt: {
+          role: "user",
+          content: "love ya"
+        }
       }, "3" )
       .prompt( {
-        content: "goodbye."
+        prompt: {
+          role: "user",
+          content: "goodbye."
+        }
       }, "4" )
-      .stream( localFileStream( { directory: __dirname, filename: "move.forward.1", append: false } ) );
+      .pipe( localFileStream( { directory: __dirname, filename: "move.forward.1", append: false } ) )
+      .execute();
     localFileStorage( { directory: __dirname, filename: "move.forward.1", chat: $chat } );
     expect( $chat.data.messages.length ).toBe( 4 ); // x2 for each prompt
   }, 60000 );
@@ -40,10 +44,16 @@ describe( "pipeline.move", () => {
     const $chat = await chat
       .clone()
       .prompt( {
-        content: "hello!"
+        prompt: {
+          role: "user",
+          content: "hello!"
+        }
       }, "1" )
       .prompt( {
-        content: "tell me a joke"
+        prompt: {
+          role: "user",
+          content: "tell me a joke"
+        }
       }, "3" )
       .response( ( { chat } ) => {
         return new Promise<void>( ( resolve, reject ) => {
@@ -52,15 +62,25 @@ describe( "pipeline.move", () => {
         } );
       } )
       .prompt( {
-        content: "I liked that. tell me another please."
+        prompt: {
+          role: "user",
+          content: "I liked that. tell me another please."
+        }
       }, "4" )
       .prompt( {
-        content: "I liked that. tell me another please."
+        prompt: {
+          role: "user",
+          content: "I liked that. tell me another please."
+        }
       }, "5" )
       .prompt( {
-        content: "goodbye."
+        prompt: {
+          role: "user",
+          content: "goodbye."
+        }
       }, "6" )
-      .stream( localFileStream( { directory: __dirname, filename: "move.forward.2", append: false } ) );
+      .pipe( localFileStream( { directory: __dirname, filename: "move.forward.2", append: false } ) )
+      .execute();
     localFileStorage( { directory: __dirname, filename: "move.forward.2", chat: $chat } );
     expect( $chat.data.messages.length ).toBe( 6 ); // x2 for each prompt
   }, 60000 );

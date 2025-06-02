@@ -1,36 +1,39 @@
 import { AzureOpenAI, ClientOptions, OpenAI } from "openai";
 import {
   ChatCompletionAssistantMessageParam,
-  ChatCompletionCreateParamsNonStreaming,
+  ChatCompletionCreateParams,
   ChatCompletionCreateParamsStreaming,
-  ChatCompletionMessageParam
+  ChatCompletionDeveloperMessageParam,
+  ChatCompletionMessageParam,
+  ChatCompletionSystemMessageParam,
+  ChatCompletionToolMessageParam,
+  ChatCompletionUserMessageParam
 } from "openai/resources";
 import { encoding_for_model, Tiktoken, TiktokenModel } from "tiktoken";
 import {
-  Function,
-  FunctionResponse,
-  LLM,
-  Options as LLMOptions,
-  Message,
-  Stream,
-  TextResponse,
-} from "../src/index";
+  LLM
+} from "../src/definitions";
+import { DSL, Initializer } from "../src/DSL";
 
-interface StreamOptions
-  extends Stream,
-  Omit<
-    ChatCompletionCreateParamsStreaming,
-    "messages" | "stream" | "functions" | "max_tokens"
-  > { }
+export type Options = LLM.Model.Options & Omit<ChatCompletionCreateParams, "messages" | "stream" | "model"> & {
+  model?: TiktokenModel | string;
+  stream?: true;
+};
 
-export type Content = ChatCompletionCreateParamsNonStreaming[ "messages" ][ 0 ][ "content" ];
+export type Prompts = LLM.Model.Prompts & (
+  ChatCompletionDeveloperMessageParam
+  | ChatCompletionUserMessageParam
+  | ChatCompletionSystemMessageParam
+  | ChatCompletionSystemMessageParam
+);
 
-export type Options
-  = LLMOptions<Content> & ChatCompletionMessageParam & {
-    model?: TiktokenModel | string;
-    content: Content;
-    tool_calls?: ChatCompletionAssistantMessageParam[ "tool_calls" ];
-  };
+export type Responses = LLM.Model.Responses & (
+  ChatCompletionAssistantMessageParam
+);
+
+export type ToolResults = LLM.Model.ToolResults & (
+  ChatCompletionToolMessageParam
+);
 
 interface ChatGPTOptions extends ClientOptions {
   model: TiktokenModel | string;
@@ -50,7 +53,105 @@ const determineEncoder = ( model: string ): Tiktoken => {
   }
 };
 
-export class ChatGPT extends LLM<Content> {
+const mapMessage = ( message: LLM.Message.Message<Options, Prompts, Responses, ToolResults> ): ChatCompletionMessageParam => {
+  switch ( message.type ) {
+    case "prompt":
+      const { prompt } = message;
+      return prompt as ChatCompletionMessageParam;
+    case "response":
+      return {
+        role: "assistant",
+        content: message.text,
+      };
+    case "function":
+      return {
+        role: "assistant",
+        tool_calls: [
+          {
+            id: message.call_id!,
+            type: "function",
+            function: {
+              name: message.function.name,
+              arguments: message.function.arguments ?? "",
+            },
+          }
+        ]
+      };
+    case "instruction":
+      return {
+        role: "system",
+        content: message.instruction,
+      };
+    case "rule":
+      return {
+        role: "system",
+        content: message.rule,
+      };
+
+    case "context":
+      return {
+        role: "system",
+        content: message.context,
+      };
+
+    case "tool":
+      return message.result as ChatCompletionToolMessageParam;
+    case "error":
+      return {
+        role: "system",
+        content: message.error,
+      };
+    default:
+      throw new Error( `Unsupported message type` );
+  }
+};
+
+
+const main = ( encoder: Tiktoken, content: string | OpenAI.Chat.Completions.ChatCompletionContentPartText[] | OpenAI.Chat.Completions.ChatCompletionContentPart[] ): number => {
+  if ( typeof content === "string" ) {
+    return encoder.encode( content ).length;
+  } else if ( Array.isArray( content ) ) {
+    return content.reduce( ( total, item ) => {
+      if ( item.type == "text" ) {
+        total += encoder.encode( item.text ).length;
+      } else if ( item.type == "image_url" ) {
+        total += 0;
+      } else if ( item.type == "input_audio" ) {
+        total += 0;
+      } else if ( item.type == "file" ) {
+        if ( item.file.file_data ) {
+          // todo
+          total += 0;
+        } else if ( item.file.filename ) {
+          // todo 
+          total += 0;
+        } else if ( item.file.file_id ) {
+          // todo
+          total += 0;
+        }
+      }
+      return total;
+    }, 0 );
+  } else {
+    return 0;
+  }
+};
+
+export class ChatGPT<Locals extends LLM.Locals = LLM.Locals, Metadata extends LLM.Metadata = LLM.Metadata> extends DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> {
+
+  constructor( service: ChatGPTOptions, options: Omit<Initializer<Options, Prompts, Responses, ToolResults, Locals, Metadata>, "llm"> = {} ) {
+    super( {
+      llm: new Service( service ),
+      ...options,
+    } );
+  }
+
+  // expect( handler: LLM.Stage.Expect<Options, Prompts, Responses, ToolResults, Locals, Metadata>, ...others: LLM.Stage.Expect<Options, Prompts, Responses, ToolResults, Locals, Metadata>[] ): DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> {
+  //   return super.expect( handler, ...others );
+  // }
+}
+
+export class Service implements LLM.Model.Service<Options, Prompts, Responses, ToolResults> {
 
   openapi: OpenAI | AzureOpenAI;
   options: ClientOptions;
@@ -58,7 +159,6 @@ export class ChatGPT extends LLM<Content> {
   model: string;
 
   constructor( options: ChatGPTOptions ) {
-    super();
     this.model = options.model;
     if ( typeof options.model !== "string" ) {
       this.encoder = options.model;
@@ -74,21 +174,32 @@ export class ChatGPT extends LLM<Content> {
     }
   }
 
-  tokens( content: Content ): number {
-    if ( content === undefined || content === null ) {
-      return 0; // no content, no tokens
-    } else if ( typeof content === "string" ) {
-      const tokens = this.encoder.encode( content );
-      return tokens.length;
-    } else if ( Array.isArray( content ) ) {
-      return content.reduce( ( total, item ) => {
-        if ( item.type === "text" ) {
-          total += this.tokens( item.text );
-        }
-        return total;
-      }, 0 );
-    } else {
-      return -1; // unknown type
+  tokens(
+    message: LLM.Message.Message<Options, Prompts, Responses, ToolResults>
+  ): number {
+    switch ( message.type ) {
+      case "prompt":
+        const { prompt } = message;
+        return main( this.encoder, prompt.content );
+      case "response":
+        return this.encoder.encode( message.text ).length;
+      case "function":
+        const name = message.function.name;
+        const args = message.function.arguments;
+        return this.encoder.encode( `${ name }${ args }` ).length;
+      case "tool":
+        const result: ChatCompletionToolMessageParam = message.result;
+        return main( this.encoder, result.content );
+      case "instruction":
+        return this.encoder.encode( message.instruction ).length;
+      case "rule":
+        return this.encoder.encode( message.rule ).length;
+      case "context":
+        return this.encoder.encode( message.context ).length;
+      case "error":
+        return this.encoder.encode( message.error ).length;
+      default:
+        return 0; // unsupported message type
     }
   }
 
@@ -99,7 +210,9 @@ export class ChatGPT extends LLM<Content> {
    * @param {Message[]} window
    * @returns number
    */
-  windowTokens( window: Message[] ): number {
+  windowTokens(
+    window: LLM.Message.Message<Options, Prompts, Responses, ToolResults>[]
+  ): number {
     let tokensPerMessage: number;
     let tokensPerName: number;
     const model = this.model;
@@ -129,7 +242,7 @@ export class ChatGPT extends LLM<Content> {
     let numTokens = 0;
 
     for ( const message of window ) {
-      numTokens += tokensPerMessage + message.size;
+      numTokens += tokensPerMessage + message.tokens.message;
       if ( Object.keys( message ).includes( "name" ) ) {
         numTokens += tokensPerName;
       }
@@ -142,11 +255,10 @@ export class ChatGPT extends LLM<Content> {
   /**
    * calculation is based off https://stackoverflow.com/questions/77168202/calculating-total-tokens-for-api-request-to-chatgpt-including-functions
    * and should be treated as an estimate and not an exact calculation
-   *
-   * @param {Function[]} functions
-   * @returns {{ total: number;[ key: string ]: number; }}
    */
-  functionTokens( functions: Function[] ): {
+  functionTokens(
+    functions: Omit<LLM.Tool.Tool<Options, Prompts, Responses, ToolResults>, "func">[]
+  ): {
     total: number;
     [ key: string ]: number;
   } {
@@ -190,9 +302,9 @@ export class ChatGPT extends LLM<Content> {
   }
 
   async *stream(
-    config: StreamOptions
-  ): AsyncIterable<FunctionResponse<Options> | TextResponse> {
-    const { messages, functions } = config;
+    config: LLM.Stream.Args<Options, Prompts, Responses, ToolResults>
+  ): AsyncIterable<LLM.Stream.Response> {
+    const { user, messages: _messages, functions, options } = config;
     const tools: OpenAI.Chat.Completions.ChatCompletionTool[] = functions?.map( ( func ) => {
       return {
         type: "function",
@@ -203,28 +315,18 @@ export class ChatGPT extends LLM<Content> {
         },
       };
     } );
+    const messages = _messages.map( mapMessage );
     const body: ChatCompletionCreateParamsStreaming = {
-      model: config.model || this.model,
-      stream: true,
-      user: config.user,
+      ...options,
+      tools: tools?.length ? tools : undefined,
+      model: options?.model || this.model,
+      stream: options?.stream ?? true,
       messages: messages as any,
-      frequency_penalty: config.frequency_penalty,
-      logit_bias: config.logit_bias,
-      logprobs: config.logprobs,
-      max_tokens: config.responseSize,
-      n: config.n,
-      parallel_tool_calls: config.parallel_tool_calls,
-      presence_penalty: config.presence_penalty,
-      response_format: config.response_format,
-      seed: config.seed,
-      stop: config.stop,
-      service_tier: config.service_tier,
-      stream_options: config.stream_options,
-      temperature: config.temperature,
-      tool_choice: config.tool_choice,
-      tools,
-      top_logprobs: config.top_logprobs,
-      top_p: config.top_p,
+      user,
+      stream_options: {
+        include_usage: true,
+        ...options?.stream_options
+      },
     };
 
     const stream = await this.openapi.chat.completions.create( body );
@@ -235,6 +337,18 @@ export class ChatGPT extends LLM<Content> {
     >();
     let toolCallId: string | undefined = undefined;
     for await ( const chunk of stream ) {
+
+      if ( chunk.usage ) {
+        yield {
+          type: "usage",
+          tokens: {
+            input: chunk.usage.prompt_tokens,
+            output: chunk.usage.completion_tokens
+          },
+        };
+        continue;
+      }
+      // todo - handle multi choice responses
       const choice = chunk.choices[ 0 ];
 
       // Tool call detected
@@ -263,41 +377,26 @@ export class ChatGPT extends LLM<Content> {
       toolCallId = undefined; // Reset tool call ID after processing
       const content = choice.delta.content;
       if ( content ) {
-        yield { type: "text", content };
+        yield { type: "text", text: content };
       }
     }
 
     // Yield complete tool calls
     for ( const [ , toolCall ] of toolCallsMap.entries() ) {
       yield {
-        type: "function",
-        name: toolCall.function.name,
-        arguments: toolCall.function.arguments,
-        id: toolCall.id,
-        message: {
-          role: "assistant",
-          content: null,
-          tool_calls: [
-            {
-              id: toolCall.id,
-              type: "function",
-              function: {
-                name: toolCall.function.name,
-                arguments: toolCall.function.arguments,
-              },
-            },
-          ],
-        },
+        type: "tool",
+        function: toolCall.function,
+        call_id: toolCall.id,
       };
     }
   }
 
 
   /**
- * Prepares the content/messages for the OpenAI API request.
- * Converts internal Message format to OpenAI's expected message format.
- * Optionally, can be extended to handle function calls or other OpenAI features.
- */
+   * Prepares the content/messages for the OpenAI API request.
+   * Converts internal Message format to OpenAI's expected message format.
+   * Optionally, can be extended to handle function calls or other OpenAI features.
+   */
   prepareContent( options: Options ) {
     let { content, functions, ...rest } = options;
     if ( typeof content === "string" ) {

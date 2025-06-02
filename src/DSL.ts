@@ -1,104 +1,53 @@
-import JSON from "json5";
+import { readFileSync } from "fs";
 import { cloneDeep } from "lodash";
-import { Chat, Message } from "./Chat";
-import { extract } from "./CodeBlocks";
-import { ResponseStage } from "./Expect";
-import { Function, LLM, StreamMessage } from "./LLM";
-import { Rule } from "./Rules";
 import { ChatStorage, NoStorage } from "./Storage";
-import { Chunk, StreamHandler } from "./Stream";
-import { Visibility, Window, main } from "./Window";
-import { LoopError, detectLoop } from "./utilities";
+import { main } from "./Window";
+import { LLM } from "./definitions";
+import { LoopError, detectLoop, extractCodeBlocks, parseJSON } from "./utilities";
 
-/**
- * TODOs
- *  - a step that allows for the user to run a process without generate a prompt / adding a message 
- *     consider a branchForEach ... to join() and the user wants to run a process from the results before
- *     generating a new prompt
- *  - branchForEach - current item in the loop is not accessible from the subsequent commands
- */
+const packageJson = JSON.parse( readFileSync( require.resolve( "../package.json" ), "utf8" ) ); // Read package.json
+const version = packageJson.version; // Extract the version
 
-interface StageFunctionArgs<O extends Options, L extends Locals, M extends Metadata> {
-  locals: L;
-  chat: DSL<O, L, M>;
-}
-type StageFunction<O extends Options, L extends Locals, M extends Metadata, F> = ( args: StageFunctionArgs<O, L, M> ) => F;
-
-type ForEachArgs<O extends Options, L extends Locals, M extends Metadata> = StageFunctionArgs<O, L, M> & {
-  item: any;
-};
-type ForEach<O extends Options, L extends Locals, M extends Metadata, F> = ( args: ForEachArgs<O, L, M> ) => void;
-
-export interface Options<T = any> {
-  content: T;
-  /**
-   * an optional key that identifies the prompt. If the key is re-used the latest 
-   * prompt will overwrite the prior
-   */
-  key?: string;
-  /**
-   * the visibility of the prompt, this value will not take effect until
-   * after the message is sent to the LLM for a response
-   */
-  visibility?: Visibility;
-  /**
-   * the number of tokens to reserve for the response
-   */
-  responseSize?: number;
-  /**
-   * a number that override the setting windowSize for the prompt
-   */
-  windowSize?: number;
-  /**
-   * whether to include the chat functions in the prompt. When `false` the functions, if defined will be excluded.
-   */
-  functions?: false;
-
-  role?: StreamMessage[ "role" ];
+export interface Initializer<Options extends LLM.Model.Options, Prompts extends LLM.Model.Prompts, Responses extends LLM.Model.Responses, ToolResults extends LLM.Model.ToolResults, Locals extends LLM.Locals, Metadata extends LLM.Metadata> {
+  llm: LLM.Model.Service<Options, Prompts, Responses, ToolResults>;
+  options?: Options;
+  locals?: Locals;
+  metadata?: Metadata;
+  storage?: ChatStorage;
+  settings?: {
+    windowSize?: number;
+    minResponseSize?: number;
+    maxCallStack?: number;
+  };
+  window?: LLM.Window;
 }
 
-export interface Locals {
-  [ key: string ]: any;
-}
+export class DSL<Options extends LLM.Model.Options
+  , Prompts extends LLM.Model.Prompts = LLM.Model.Prompts
+  , Responses extends LLM.Model.Responses = LLM.Model.Responses
+  , ToolResults extends LLM.Model.ToolResults = LLM.Model.ToolResults
+  , Locals extends LLM.Locals = LLM.Locals
+  , Metadata extends LLM.Metadata = LLM.Metadata
+> {
 
-export interface Settings {
-  windowSize: number;
-  minResponseSize: number;
-  maxCallStack: number;
-}
-const DEFAULT_SETTINGS: Settings = {
-  windowSize: 4000,
-  minResponseSize: 400,
-  maxCallStack: 10,
-};
-
-export type Metadata = undefined | Record<string, unknown>;
-
-export class DSL<O extends Options, L extends Locals, M extends Metadata> {
-
-  llm: LLM;
-  options: Omit<O, "message">;
-  window: Window;
+  llm: LLM.Model.Service<Options, Prompts, Responses, ToolResults>;
+  options: Options;
+  window: LLM.Window;
   storage: ChatStorage;
-  data: Chat<M>;
-  locals: L;
+  data: LLM.Chat<Options, Prompts, Responses, ToolResults, Metadata>;
+  locals: Locals;
   rules: string[] = [];
   type: "chat" | "sidebar" = "chat";
   user?: string = undefined;
-  settings: Settings;
+  settings: LLM.Settings;
 
   functions: {
-    [ key: string ]: (
-      Function & {
-        func: ( args: any ) => Promise<Options | O>;
-        calls: number;
-      }
-    );
+    [ key: string ]: LLM.Tool.Tool<Options, Prompts, Responses, ToolResults, Locals, Metadata, any> & { calls: number; };
   } = {};
   pipeline: Array<{
     id: string;
     stage: string;
-    promise: ( $this: DSL<O, L, M> ) => Promise<void>;
+    promise: ( $this: DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> ) => Promise<void>;
   }> = [];
 
   exitCode?: 1 | Error = undefined;
@@ -106,35 +55,25 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
    * manages the current position of the pipeline
    */
   private pipelineCursor: number = -1;
+  private nextPosition: number = 0;
+
   /**
    * these are the stream handlers that will receive any this.out calls
    */
-  private streamHandlers: StreamHandler[] = [];
+  private streamHandlers: LLM.Stream.Handler<Options, Prompts, Responses, ToolResults, Metadata>[] = [];
 
-  constructor( { llm, options, locals, metadata, settings, window, storage }: {
-    llm: LLM;
-    options?: Omit<O, "message">;
-    locals?: L;
-    metadata?: M;
-    storage?: ChatStorage;
-    settings?: {
-      windowSize?: number;
-      minResponseSize?: number;
-      maxCallStack?: number;
-    };
-    window?: Window;
-  } ) {
+  constructor( { llm, options, locals, metadata, settings, window, storage }: Initializer<Options, Prompts, Responses, ToolResults, Locals, Metadata> ) {
     this.llm = llm;
-    this.options = options || {} as Omit<O, "message">;
-    this.locals = locals || {} as L;
-    this.settings = { ...DEFAULT_SETTINGS, ...settings };
+    this.options = options ?? ( {} as Options );
+    this.locals = locals ?? ( {} as Locals );
+    this.settings = { ...LLM.DEFAULT_SETTINGS, ...settings };
     this.window = window || main;
     this.storage = storage || NoStorage;
     this.data = {
       id: this.storage.newId(),
       messages: [],
       sidebars: [],
-      metadata: metadata ?? {} as M,
+      metadata: { ...metadata, $: { version } } as Metadata, // Use the dynamically fetched version
       inputs: 0,
       outputs: 0
     };
@@ -147,17 +86,21 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
    * 
    * @returns DSL
    */
-  sidebar( { rules: _rules, functions: _functions, locals: _locals }: { rules?: boolean; functions?: boolean; locals?: boolean; } = {} ) {
+  sidebar( { rules: _rules, functions: _functions, locals: _locals }: LLM.Stage.Sidebar = {} ) {
     // create a new chat and have a sidebar conversation
-    const sidebar = new DSL<O, L, Metadata & { $parent: string; }>( {
+    const metadata = {
+      ...this.data.metadata,
+      $: {
+        ...this.data.metadata.$,
+        parent: this.data.id!,
+      },
+    } as Metadata;
+    const sidebar = new DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata>( {
       llm: this.llm,
       options: this.options,
       storage: this.storage,
       settings: this.settings,
-      metadata: {
-        ...( this.data.metadata || {} ),
-        $parent: this.data.id!
-      },
+      metadata,
       window: this.window,
     } );
     this.data.sidebars.push( sidebar.data.id! );
@@ -176,12 +119,12 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
    * @param id: a user id to associate with the chat and new prompts
    */
   setUser( id: string ) {
-    const promise = ( $this: DSL<O, L, M> ) => new Promise<void>( ( resolve, reject ) => {
+    const promise = ( $this: DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> ) => new Promise<void>( ( resolve, reject ) => {
       $this.user = id;
       if ( $this.data.user === undefined ) $this.data.user = $this.user;
       resolve();
     } );
-    this.pipeline.push( { id: this.storage.newId(), stage: "user", promise } );
+    this._addStage( { id: this.storage.newId(), stage: "user", promise } );
     return this;
   }
 
@@ -191,55 +134,52 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
    * @param value: L
    * @returns DSL
    */
-  setLocals( args: ( L | ( ( args: { chat: DSL<O, L, M>; } ) => L | Promise<L> ) ), id: string = this.storage.newId() ) {
-    const promise = ( $this: DSL<O, L, M> ) => new Promise<void>( ( resolve, reject ) => {
+  setLocals( args: LLM.Stage.SetLocals<Options, Prompts, Responses, ToolResults, Locals, Metadata>, id: string = this.storage.newId() ) {
+    const promise = ( $this: DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> ) => new Promise<void>( async ( resolve, reject ) => {
+      let locals: Locals;
       if ( typeof args === "function" ) {
-        const result = args( { chat: $this } );
+        const result = args( { chat: $this, locals: $this.locals } );
         if ( result instanceof Promise ) {
-          result
-            .then( locals => {
-              $this.locals = { ...$this.locals, ...locals };
-              resolve();
-            } )
-            .catch( reject );
+          locals = await result;
         } else {
-          $this.locals = { ...$this.locals, ...result };
-          resolve();
+          locals = result;
         }
       } else {
-        $this.locals = { ...$this.locals, ...args };
-        resolve();
+        locals = args;
       }
+      $this.locals = { ...$this.locals, ...locals };
+      resolve();
     } );
-    this.pipeline.push( { id: id, stage: "locals", promise } );
+    this._addStage( { id: id, stage: "locals", promise } );
     return this;
   }
 
   /**
    * set metadata for the chat
    */
-  setMetadata( args: ( M | ( ( _args: { chat: DSL<O, L, M>; } ) => M | Promise<M> ) ), id: string = this.storage.newId() ) {
-    const promise = ( $this: DSL<O, L, M> ) => new Promise<void>( ( resolve, reject ) => {
-      const metadata = $this.data.metadata || {};
+  setMetadata( args: LLM.Stage.SetMetadata<Options, Prompts, Responses, ToolResults, Locals, Metadata>, id: string = this.storage.newId() ) {
+    const promise = ( $this: DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> ) => new Promise<void>( async ( resolve, reject ) => {
+      let metadata: Metadata;
       if ( typeof args === "function" ) {
-        const result = args( { chat: $this } );
+        const result = args( { chat: $this, locals: $this.locals } );
         if ( result instanceof Promise ) {
-          result
-            .then( m => {
-              $this.data.metadata = { ...metadata, ...m };
-              resolve();
-            } )
-            .catch( reject );
+          metadata = await result;
         } else {
-          $this.data.metadata = { ...metadata, ...result };
-          resolve();
+          metadata = result;
+
         }
       } else {
-        $this.data.metadata = { ...metadata, ...args };
-        resolve();
+        metadata = args;
       }
+      $this.data.metadata = { ...$this.data.metadata, ...metadata };
+      $this.out( {
+        type: "metadata",
+        chat: $this.data.id!,
+        metadata: $this.data.metadata,
+        id: $this.storage.newId()
+      } );
     } );
-    this.pipeline.push( { id: id, stage: "metadata", promise } );
+    this._addStage( { id: id, stage: "metadata", promise } );
     return this;
   }
 
@@ -247,70 +187,75 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
   /**
    * add a message after the current pipeline position without generating a prompt.
    */
-  push( options: ( Options | O | StageFunction<O, L, M, Options | O> ), id: string = this.storage.newId() ) {
-    const promise = ( $this: DSL<O, L, M> ) => new Promise<void>( ( resolve, reject ) => {
-      const messageId = this.storage.newId();
-      const _options: ( Options | O ) = typeof options === "function" ? options( { locals: $this.locals, chat: $this } ) : options;
-      const visibility = _options.visibility !== undefined ? _options.visibility : Visibility.OPTIONAL;
-      const content = $this.llm.prepareContent( _options );
-      const message: Message = {
-        id: messageId,
-        key: _options.key,
-        role: _options.role || $this.options.role || "user",
-        content: content,
-        size: $this.llm.tokens( content ) + 3,
-        visibility: visibility,
+  push( args: LLM.Stage.Push<Options, Prompts, Responses, ToolResults, Locals, Metadata>, id: string = this.storage.newId() ) {
+    const promise = ( $this: DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> ) => new Promise<void>( async ( resolve, reject ) => {
+      const id = this.storage.newId();
+      let result: LLM.Stage.ContextArgs;
+      if ( typeof args === "function" ) {
+        const _args = args( { locals: $this.locals, chat: $this } );
+        if ( _args instanceof Promise ) {
+          result = await _args;
+        } else {
+          result = _args;
+        }
+      } else {
+        result = args;
+      }
+      const message: LLM.Message.Context = {
+        id: this.storage.newId(),
+        type: "context",
+        visibility: LLM.Visibility.OPTIONAL,
+        ...result,
         createdAt: new Date(),
-        window: [],
-        windowSize: 0,
         user: $this.user,
-        prompt: messageId,
+        tokens: {
+          message: 0
+        }
       };
+      message.tokens.message = $this.llm.tokens( message );
       $this.data.messages.push( message );
-      $this.out( { ...message, chat: $this.data.id!, type: "message" } );
+      $this.out( { id: message.id, type: "message", message, chat: $this.data.id! } );
       resolve();
     } );
+
     const stage = { id: id, stage: "push", promise };
-    if ( this.pipelineCursor === -1 ) {
-      this.pipeline.push( stage );
-    } else {
-      const currentStageIndex = this.pipelineCursor + 1;
-      this.pipeline = [
-        ...this.pipeline.slice( 0, currentStageIndex + 1 ), // 0 to the current stage inclusive
-        stage,
-        ...this.pipeline.slice( currentStageIndex + 1 ) // the next stage to the end
-      ];
-    }
+    this._addStage( stage );
     return this;
   }
 
   /**
    * add a message to the end of the chat without generating a prompt.
    */
-  append( options: ( Options | O | StageFunction<O, L, M, Options | O> ), id: string = this.storage.newId() ) {
-    const promise = ( $this: DSL<O, L, M> ) => new Promise<void>( ( resolve, reject ) => {
-      const messageId = this.storage.newId();
-      const _options: ( Options | O ) = typeof options === "function" ? options( { locals: $this.locals, chat: $this } ) : options;
-      const visibility = _options.visibility !== undefined ? _options.visibility : Visibility.OPTIONAL;
-      const content = $this.llm.prepareContent( _options );
-      const message: Message = {
-        id: messageId,
-        key: _options.key,
-        role: _options.role || $this.options.role || "user",
-        content: content,
-        size: $this.llm.tokens( content ) + 3,
-        visibility: visibility,
+  append( args: LLM.Stage.Append<Options, Prompts, Responses, ToolResults, Locals, Metadata>, id: string = this.storage.newId() ) {
+    const promise = ( $this: DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> ) => new Promise<void>( async ( resolve, reject ) => {
+      let result: LLM.Stage.ContextArgs;
+      if ( typeof args === "function" ) {
+        const _args = args( { locals: $this.locals, chat: $this } );
+        if ( _args instanceof Promise ) {
+          result = await _args;
+        } else {
+          result = _args;
+        }
+      } else {
+        result = args;
+      }
+      const message: LLM.Message.Context = {
+        id: this.storage.newId(),
+        type: "context",
+        visibility: LLM.Visibility.OPTIONAL,
+        ...result,
         createdAt: new Date(),
-        window: [],
-        windowSize: 0,
         user: $this.user,
-        prompt: messageId,
+        tokens: {
+          message: 0
+        }
       };
+      message.tokens.message = $this.llm.tokens( message );
       $this.data.messages.push( message );
-      $this.out( { ...message, chat: $this.data.id!, type: "message" } );
+      $this.out( { id: message.id, type: "message", chat: $this.data.id!, message } );
       resolve();
     } );
-    this.pipeline.push( { id: id, stage: "push", promise } );
+    this._addStage( { id: id, stage: "append", promise } );
     return this;
   }
 
@@ -320,16 +265,43 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
    * @param options 
    * @returns {object} - the chat object   
    */
-  prompt( options: ( Options | O | StageFunction<O, L, M, Options | O> ), id: string = this.storage.newId() ) {
-    const promise = ( $this: DSL<O, L, M> ) => {
-      return new Promise<void>( ( resolve, reject ) => {
-        const _options: ( Options | O ) = typeof options === "function" ? options( { locals: $this.locals, chat: $this } ) : options;
-        $this._prompt( $this, { ...$this.options, ..._options } as O )()
-          .then( () => resolve() )
+  prompt( args: LLM.Stage.Prompt<Options, Prompts, Responses, ToolResults, Locals, Metadata>, id: string = this.storage.newId() ): DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> {
+    const promise = ( $this: DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> ) => {
+      return new Promise<void>( async ( resolve, reject ) => {
+        let result: LLM.Stage.PromptArgs<Options, Prompts>;
+        if ( typeof args === "function" ) {
+          const _args = args( { locals: $this.locals, chat: $this } );
+          if ( _args instanceof Promise ) {
+            result = await _args;
+          } else {
+            result = _args;
+          }
+        } else {
+          result = args;
+        }
+        const { options, prompt, key } = result;
+        const message: LLM.Message.Prompt<Options, Prompts> = {
+          id: $this.storage.newId(),
+          key: key,
+          type: "prompt",
+          visibility: LLM.Visibility.OPTIONAL,
+          createdAt: new Date(),
+          user: $this.user,
+          options,
+          prompt,
+          tokens: {
+            message: 0
+          }
+        };
+        message.tokens.message = $this.llm.tokens( message );
+        $this.data.messages.push( message );
+        $this.out( { id: message.id, type: "message", message, chat: $this.data.id! } );
+        $this._send( { chat: $this, functions: true, caller: message.id, options } )
+          .then( resolve )
           .catch( reject );
       } );
     };
-    this.pipeline.push( { id: id, stage: "prompt", promise } );
+    this._addStage( { id: id, stage: "prompt", promise } );
     return this;
   }
 
@@ -339,66 +311,22 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
    * @param func 
    * @returns {object} - the chat object   
    */
-  promptForEach( func: StageFunction<O, L, M, ( Options | O )[]>, id: string = this.storage.newId() ) {
-    console.warn( "Deprecation Warning: 'promptForEach' is deprecated and may be removed in future versions." );
-    const promise = ( $this: DSL<O, L, M> ) => {
-      return new Promise<void>( ( resolve, reject ) => {
-        const promises = func( { locals: $this.locals, chat: $this } )
-          .map( p => {
-            return { id: this.storage.newId(), stage: "prompt", promise: $this._prompt( $this, { ...$this.options, ...p } as O ) };
-          } );
-        const currentStageIndex = $this.pipelineCursor + 1;
-        $this.pipeline = [
-          ...$this.pipeline.slice( 0, currentStageIndex + 1 ),
-          ...promises,
-          ...$this.pipeline.slice( currentStageIndex + 1 )
-        ];
-        resolve();
-      } );
-    };
-    this.pipeline.push( { id: id, stage: "promptForEach", promise } );
-    return this;
-  }
-
-  /**
-   * create a branch of prompts from the chat context. Each branch will include all
-   * prompts up to a .join() command.
-   * 
-   * @param func 
-   * @returns {object} - the chat object   
-   */
-  branchForEach( func: StageFunction<O, L, M, ( Options | O )[]>, id: string = this.storage.newId() ) {
-    console.warn( "Deprecation Warning: 'branchForEach' is deprecated and may be removed in future versions." );
-    const promise = ( $this: DSL<O, L, M> ) => {
-      return new Promise<void>( ( resolve, reject ) => {
-        const promises = func( { locals: $this.locals, chat: $this } ).map( p => {
-          return { id: this.storage.newId(), stage: "prompt", promise: $this._prompt( $this, { ...$this.options, ...p } as O ) };
-        } );
-        const joinIndex = $this.pipeline.slice( $this.pipelineCursor ).map( p => p.stage ).indexOf( "join" );
-        if ( joinIndex === -1 ) {
-          reject( "branchForEach requires a join()" );
-          return;
+  promptForEach( func: LLM.Stage.PromptForEach<Options, Prompts, Responses, ToolResults, Locals, Metadata>, id: string = this.storage.newId() ): DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> {
+    console.warn( "Deprecation Warning: 'promptForEach' is deprecated and may be removed in future versions. Use `forEach` instead." );
+    const promise = ( $this: DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> ) => {
+      return new Promise<void>( async ( resolve, reject ) => {
+        let prompts: LLM.Stage.PromptArgs<Options, Prompts>[] = [];
+        const result = func( { locals: $this.locals, chat: $this } );
+        if ( result instanceof Promise ) {
+          prompts = await result;
+        } else {
+          prompts = result;
         }
-        const currentStageIndex = $this.pipelineCursor + 1;
-        $this.pipeline = [
-          ...$this.pipeline.slice( 0, currentStageIndex + 1 ),
-          ...promises.flatMap( p => [ p, ...$this.pipeline.slice( currentStageIndex + 1, joinIndex + currentStageIndex ) ] ),
-          ...$this.pipeline.slice( joinIndex + currentStageIndex + 1 )
-        ];
+        prompts.forEach( p => $this.prompt( p ) );
         resolve();
       } );
     };
-    this.pipeline.push( { id: id, stage: "branchForEach", promise } );
-    return this;
-  }
-
-  /**
-   * establishes a stopping point for the `branchForEach`
-   */
-  join( id: string = this.storage.newId() ) {
-    console.warn( "Deprecation Warning: 'join' is deprecated and may be removed in future versions." );
-    // see forEachBranch
-    this.pipeline.push( { id: id, stage: "join", promise: ( $this: DSL<O, L, M> ) => new Promise<void>( ( resolve ) => resolve() ) } );
+    this._addStage( { id: id, stage: "promptForEach", promise } );
     return this;
   }
 
@@ -408,8 +336,8 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
    * @param {string} id - a chat id 
    * @returns {object} - the chat object   
    */
-  load( id: string, stageId: string = this.storage.newId() ) {
-    const promise = ( $this: DSL<O, L, M> ) => new Promise<void>( async ( resolve, reject ) => {
+  load( id: string, stageId: string = this.storage.newId() ): DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> {
+    const promise = ( $this: DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> ) => new Promise<void>( async ( resolve, reject ) => {
       const result = $this.storage.getById( id );
       if ( result instanceof Promise ) {
         result
@@ -420,18 +348,18 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
             // outside of the executing pipeline. Any messages created by prior
             // executing stages will be added if the id or key is unique between
             // the current pipeline messages and the incoming messages.
-            const messages: Message[] = [
-              ...$this.data.messages.filter( m => m.visibility === Visibility.REQUIRED || m.key !== undefined ),
+            const messages: LLM.Message.Message<Options, Prompts, Responses, ToolResults>[] = [
+              ...$this.data.messages.filter( m => m.visibility === LLM.Visibility.REQUIRED || m.key !== undefined ),
               ...data.messages,
             ].reduce( ( prev, curr ) => {
-              const index = prev.findIndex( m => m.id === curr.id || ( m.key && curr.key && m.key === curr.key ) );
+              const index = prev.findIndex( ( m ) => m.id === curr.id || ( m.key && curr.key && m.key === curr.key ) );
               if ( index === -1 ) {
                 prev.push( curr );
               } else {
                 prev[ index ] = curr;
               }
               return prev;
-            }, [] as Message[] );
+            }, [] as LLM.Message.Message<Options, Prompts, Responses, ToolResults>[] );
             $this.data = data;
             $this.data.messages = messages;
             resolve();
@@ -442,7 +370,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
         resolve();
       }
     } );
-    this.pipeline.push( { id: stageId, stage: "load", promise } );
+    this._addStage( { id: stageId, stage: "load", promise } );
     return this;
   }
 
@@ -451,8 +379,8 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
    * 
    * @returns {Promise}
    */
-  save() {
-    return this.storage.save( this );
+  save(): Promise<void> {
+    return this.storage.save( this as DSL<any, any, any, any> );
   }
 
   /**
@@ -460,7 +388,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
    * 
    * @returns a clone of the chat object
    */
-  clone( { startAt }: { startAt: "beginning" | "end" | number; } = { startAt: "beginning" } ) {
+  clone( { startAt }: { startAt: "beginning" | "end" | number; } = { startAt: "beginning" } ): DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> {
     const $this = cloneDeep( this );
     $this.data.id = this.storage.newId();
     $this.data.messages = $this.data.messages.map( m => {
@@ -487,35 +415,80 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
    * @param options 
    * @returns {object} - the chat object
    */
-  rule( options: ( Rule | StageFunction<O, L, M, Rule> ) ) {
-    const promise = ( $this: DSL<O, L, M> ) => {
-      const { name, requirement, key, id, role }: Rule = typeof options === "function" ? options( { locals: $this.locals, chat: $this } ) : options;
-      const content = `${ name } - ${ requirement }`;
+  rule( options: LLM.Stage.Rule<Options, Prompts, Responses, ToolResults, Locals, Metadata>, id: string = this.storage.newId() ): DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> {
+    const promise = async ( $this: DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> ) => {
+      let rule: LLM.Stage.RuleArgs;
+      if ( typeof options === "function" ) {
+        const result = options( { locals: $this.locals, chat: $this } );
+        if ( result instanceof Promise ) {
+          rule = await result;
+        } else {
+          rule = result;
+        }
+      } else {
+        rule = options;
+      }
+      const { name, requirement, key } = rule;
       return new Promise<void>( ( resolve, reject ) => {
         const ruleId = id || this.storage.newId();
         const _key = key || name;
-        const index = $this.data.messages.map( m => m.key ).indexOf( _key );
         // upsert the rule if the content has changed
-        if ( index === -1 || $this.data.messages[ index ].content !== content ) {
-          $this.data.messages.push( {
-            id: ruleId,
-            role: role || "system",
-            key: _key,
-            content: {
-              content,
-              role: role || "system",
-            },
-            size: $this.llm.tokens( content ) + 3,
-            visibility: Visibility.REQUIRED,
-            createdAt: new Date(),
-            prompt: ruleId
-          } );
-          $this.rules.push( ruleId );
-        }
+        const message: LLM.Message.Rule = {
+          id: ruleId,
+          key: _key,
+          type: "rule",
+          rule: requirement,
+          visibility: LLM.Visibility.REQUIRED,
+          createdAt: new Date(),
+          tokens: {
+            message: 0
+          }
+        };
+        message.tokens.message = $this.llm.tokens( message );
+        $this.data.messages.push( message );
+        $this.rules.push( ruleId );
         resolve();
       } );
     };
-    this.pipeline.push( { id: this.storage.newId(), stage: "rule", promise } );
+    this._addStage( { id: this.storage.newId(), stage: "rule", promise } );
+    return this;
+  }
+
+  /**
+   * 
+   * @param options 
+   * @returns {object} - the chat object
+   */
+  instruction( options: LLM.Stage.Instruction ): DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> {
+    const promise = ( $this: DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> ) => {
+      return new Promise<void>( ( resolve, reject ) => {
+        let instruction: string | undefined = undefined;
+        if ( typeof options === "string" ) {
+          // the instructions are a string
+          instruction = options;
+        } else if ( typeof options === "object" && options.filepath ) {
+          instruction = readFileSync( options.filepath, "utf8" );
+        } else {
+          reject( new Error( "instruction must be a string or an object with a filepath property" ) );
+          return;
+        }
+        const message: LLM.Message.Instruction = {
+          id: $this.storage.newId(),
+          type: "instruction",
+          key: "instruction",
+          instruction: instruction,
+          visibility: LLM.Visibility.REQUIRED,
+          createdAt: new Date(),
+          tokens: {
+            message: 0
+          }
+        };
+        message.tokens.message = $this.llm.tokens( message );
+        $this.data.messages.push( message );
+        resolve();
+      } );
+    };
+    this._addStage( { id: this.storage.newId(), stage: "instruction", promise } );
     return this;
   }
 
@@ -525,7 +498,12 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
    * @param options 
    * @returns {object} - the chat object
    */
-  function<F>( options: Function & { func: ( args: F & { locals: L, chat: DSL<O, L, M>; tool_call_id?: string; } ) => Promise<Options | O>; } ) {
+  function<F>( options: LLM.Tool.Tool<Options, Prompts, Responses, ToolResults, Locals, Metadata, F> ): DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> {
+    console.warn( "Deprecation Warning: 'function' is deprecated and may be removed in future versions. Use `tool` instead." );
+    return this.tool( options );
+  }
+
+  tool<F>( options: LLM.Tool.Tool<Options, Prompts, Responses, ToolResults, Locals, Metadata, F> ): DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> {
     const { name } = options;
     this.functions[ name ] = { ...options, calls: 0 };
     return this;
@@ -534,70 +512,79 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
   /**
    * manually call a function within the DSL
    */
-  call( name: string, args?: { [ key: string ]: any; }, id: string = this.storage.newId() ) {
-    const promise = ( $this: DSL<O, L, M> ) => {
-      return new Promise<void>( ( resolve, reject ) => {
+  call<F>( { name, args, generateResponse }: LLM.Stage.Call<F>, id: string = this.storage.newId() ): DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> {
+    const promise = ( $this: DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> ) => {
+      return new Promise<void>( async ( resolve, reject ) => {
         if ( !$this.functions[ name ] ) {
           return reject( `function not found: ${ name }` );
         }
-        // add a new message representing the function was called
-        const messageId = this.storage.newId();
-        const content = `The LLM called function ${ name } with arguments ${ JSON.stringify( args ) }`;
-        const functionSize = $this.llm.tokens( content ) + 3;
-        const functionCall: Message = {
-          id: messageId,
-          role: "system",
-          content: content,
-          visibility: Visibility.SYSTEM,
-          createdAt: new Date(),
-          size: functionSize,
-          prompt: id
-        };
-        $this.data.messages.push( functionCall );
-        $this.out( {
-          ...functionCall,
-          type: "message",
-          chat: $this.data.id!
-        } );
 
         // execute the function
         const { func } = $this.functions[ name ];
-        let result: O | Options;
-        func( { ...args, locals: $this.locals, chat: $this } )
-          .then( _result => {
-            result = _result;
-            result.content = $this.llm.prepareContent( _result );
-            result.role = "system";
-            result.visibility = result.visibility !== undefined ? result.visibility : Visibility.SYSTEM;
-          } )
-          .catch( error => {
-            result = {
-              content: String( error ),
-              role: "system",
-              visibility: Visibility.SYSTEM
-            };
-          } )
-          .finally( () => {
-            const stage = { id: this.storage.newId(), stage: name, promise: $this._prompt( $this, { ...$this.options, ...result } as O, id ) };
-            $this.pipeline.push( stage );
-            resolve();
-          } );
+        let result: any;
+        const _result = func( { ...args, locals: $this.locals, chat: $this } );
+        if ( _result instanceof Promise ) {
+          result = await _result;
+        } else {
+          result = _result;
+        }
+        const message: LLM.Message.ToolResult<ToolResults> = {
+          id: $this.storage.newId(),
+          type: "tool",
+          result,
+          createdAt: new Date(),
+          visibility: LLM.Visibility.SYSTEM,
+          tokens: {
+            message: 0
+          }
+        };
+        message.tokens.message = $this.llm.tokens( message );
+        $this.data.messages.push( message );
+        if ( generateResponse ) {
+          // todo - _send should accept the prompt options but not require a content
+          await $this._send( { chat: $this, functions: true, caller: message.id } );
+        }
+        resolve();
       } );
     };
-    this.pipeline.push( { id: id, stage: `call function - ${ name }`, promise } );
+    this._addStage( { id: id, stage: `call function - ${ name }`, promise } );
     return this;
   }
 
   /**
    * directly access the LLM response the latest prompt.
    */
-  response( func: ResponseStage<O, L, M>, id: string = this.storage.newId() ) {
-    const promise = ( $this: DSL<O, L, M> ) => {
-      return func( { response: $this.data.messages[ $this.data.messages.length - 1 ], locals: $this.locals, chat: $this } );
+  response( func: LLM.Stage.Response<Options, Prompts, Responses, ToolResults, Locals, Metadata>, id: string = this.storage.newId() ): DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> {
+    const promise = async ( $this: DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> ) => {
+      const response = $this.data.messages[ $this.data.messages.length - 1 ];
+      const result = func( { response, locals: $this.locals, chat: $this } );
+      if ( result instanceof Promise ) {
+        await result;
+      }
+      return Promise.resolve();
     };
-    this.pipeline.push( { id: id, stage: "response", promise } );
+    this._addStage( { id: id, stage: "response", promise } );
     return this;
   }
+
+
+  // 1 argument
+  expect<A extends Record<string, any>>(
+    a: LLM.Stage.Expect<Options, Prompts, Responses, ToolResults, Locals, Metadata, A>
+  ): DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata>;
+
+  // 2 arguments
+  expect<A extends Record<string, any>, B extends Record<string, any>>(
+    a: LLM.Stage.Expect<Options, Prompts, Responses, ToolResults, Locals, Metadata, A>,
+    b: LLM.Stage.Expect<Options, Prompts, Responses, ToolResults, Locals, Metadata, B, A>
+  ): DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata>;
+
+  // 3 arguments
+  expect<A extends Record<string, any>, B extends Record<string, any>, C extends Record<string, any>,>(
+    a: LLM.Stage.Expect<Options, Prompts, Responses, ToolResults, Locals, Metadata, A>,
+    b: LLM.Stage.Expect<Options, Prompts, Responses, ToolResults, Locals, Metadata, B, A>,
+    c: LLM.Stage.Expect<Options, Prompts, Responses, ToolResults, Locals, Metadata, C, B>,
+  ): DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata>;
 
   /**
    * Establish expectations for the response from the LLM.
@@ -607,68 +594,398 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
    * this doesn't support stage id assignment b/c of the rest arguments
    * 
    */
-  expect( handler: ResponseStage<O, L, M>, ...others: ResponseStage<O, L, M>[] ) {
+  expect(
+    ...handlers: LLM.Stage.Expect<Options, Prompts, Responses, ToolResults, Locals, Metadata>[]
+  ) {
     const stageId = this.storage.newId();
-    const promise = ( $this: DSL<O, L, M> ) => {
-      return new Promise<void>( async ( resolve, reject ) => {
-        const handlers = [ handler, ...others ];
+    const promise = ( $this: DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> ) => {
+      return new Promise<void>( async ( resolve, _reject ) => {
+        const response = $this.data.messages.findLast( m => m.type === "response" ) as LLM.Message.TextResponse | undefined;
+        if ( !response ) {
+          process.emitWarning( "No response found in the chat history. Expectation cannot be set." );
+          return resolve();
+        }
+        let expect: Record<string, any> | LLM.Stage.ExpectErrorResult | void = {};
         for ( const handler of handlers ) {
-          const response = $this.data.messages[ $this.data.messages.length - 1 ];
-          try {
-            await handler( { response: response, locals: $this.locals, chat: $this } );
-          } catch ( expectation ) {
-            if ( typeof expectation !== "string" ) {
-              reject( expectation );
-              break;
-            }
-            // an expecatation was thrown
-            // push an dispute prompt as the next stage
-            // followed by this expect promise again so it can be re-evaluated
-            $this.pipeline = [
-              ...$this.pipeline.slice( 0, $this.pipelineCursor + 1 ),
-              {
-                id: stageId,
-                stage: `dispute`,
-                promise: $this._prompt( $this, {
-                  ...$this.options,
-                  role: "system",
-                  visibility: Visibility.SYSTEM,
-                  content: expectation
-                } as unknown as O )
-              },
-              ...$this.pipeline.slice( $this.pipelineCursor )
-            ];
-            break;
+          const result = handler( { response, locals: $this.locals, chat: $this, ...expect } );
+          let expectation: Record<string, any> | LLM.Stage.ExpectErrorResult | void;
+          if ( result instanceof Promise ) {
+            expectation = await result;
+          } else {
+            expectation = result;
           }
-        };
-        resolve();
+          if ( !expectation ) {
+            return resolve();
+          } else if ( expectation.type !== "error" ) {
+            // expectation is a valid expectation
+            expect = expectation;
+            continue;
+          }
+          // expectation is a error result
+          const stage = {
+            id: stageId,
+            stage: "expect:disput",
+            promise: ( $this: DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> ) => new Promise<void>( ( resolve, reject ) => {
+              // there was a problem;
+              const { error } = expectation as LLM.Stage.ExpectErrorResult;
+              const message: LLM.Message.Error = {
+                id: $this.storage.newId(),
+                type: "error",
+                error: error || "Expectation failed",
+                visibility: LLM.Visibility.SYSTEM,
+                createdAt: new Date(),
+                tokens: {
+                  message: 0
+                }
+              };
+              message.tokens.message = $this.llm.tokens( message );
+              $this.data.messages.push( message );
+              $this.out( { id: message.id, message, type: "message", chat: $this.data.id! } );
+              $this._send( { chat: $this, functions: true, caller: message.id } )
+                .then( () => resolve() )
+                .catch( reject );
+            } )
+          };
+          $this._addStage( stage );
+          resolve();
+        }
       } );
     };
-    this.pipeline.push( { id: stageId, stage: "expect", promise } );
+    this._addStage( { id: stageId, stage: "expect", promise } );
     return this;
   }
 
   /**
    * handlers to receive the chat stream and execute the pipeline
    */
-  async stream( handler: StreamHandler, ...others: StreamHandler[] ) {
-    this.streamHandlers = [ handler, ...others ];
-    return this.execute();
+  stream( handler: LLM.Stream.Handler<Options, Prompts, Responses, ToolResults, Metadata>, ...others: LLM.Stream.Handler<Options, Prompts, Responses, ToolResults, Metadata>[] ): DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> {
+    console.warn( "Deprecation Warning: 'stream' is deprecated and may be removed in future versions. Use `pipe` instead." );
+    return this.pipe( handler, ...others );
   }
 
+  pipe( handler: LLM.Stream.Handler<Options, Prompts, Responses, ToolResults, Metadata>, ...others: LLM.Stream.Handler<Options, Prompts, Responses, ToolResults, Metadata>[] ): DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> {
+    this.streamHandlers = [ ...this.streamHandlers, handler, ...others ];
+    return this;
+  }
+
+
+  /**
+   * when called the pipeline will stop executing after the current stage is completed. If an error is provided this
+   * will be thrown as a new Error()
+   */
+  exit( error: Error | 1 = 1 ) {
+    this.exitCode = error;
+  }
+
+  /**
+   * 
+   */
+  pause( func: LLM.Stage.Pause<Options, Prompts, Responses, ToolResults, Locals, Metadata>, id: string = this.storage.newId() ): DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> {
+    const promise = ( $this: DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> ) => {
+      return new Promise<void>( async ( resolve, reject ) => {
+        const result = func( { locals: $this.locals, chat: $this } );
+        if ( result instanceof Promise ) {
+          await result;
+        }
+        resolve();
+      } );
+    };
+    this._addStage( { id: id, stage: "pause", promise } );
+    return this;
+  }
+
+  /**
+   * sets the position of the pipeline to the stage with the provided id. If a id matches a stage, that stage will be executed
+   * next and continue from that position. If a stage is not found a error is thrown.
+   */
+  moveTo( args: LLM.Stage.MoveTo<Options, Prompts, Responses, ToolResults, Locals, Metadata> ): DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> {
+    const promise = ( $this: DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> ) => {
+      return new Promise<void>( async ( resolve, reject ) => {
+        let targetId: string;
+        if ( typeof args === "function" ) {
+          const _args = args( { locals: $this.locals, chat: $this } );
+          if ( _args instanceof Promise ) {
+            const result = await _args;
+            targetId = result.id;
+          } else {
+            targetId = _args.id;
+          }
+        } else {
+          targetId = args.id;
+        }
+        const index = $this.pipeline.findIndex( ( { id: _id } ) => _id === targetId );
+        if ( index === -1 ) {
+          return reject( new Error( `No Pipeline Stage with id ${ targetId }` ) );
+        }
+        // apply the prior index b/c the execute process auto increments the
+        // pipelineCursor by 1 before each stage
+        $this.pipelineCursor = index - 2;
+        resolve();
+      } );
+    };
+    const stage = { id: this.storage.newId(), stage: "moveTo", promise };
+    this._addStage( stage );
+    return this;
+  }
+
+  forEach<T>( iterable: T[], func: LLM.Stage.ForEach<Options, Prompts, Responses, ToolResults, Locals, Metadata>, id: string = this.storage.newId() ): DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> {
+    const promise = ( $this: DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> ) => new Promise<void>( ( resolve, reject ) => {
+      try {
+        // const originalPosition = $this.pipelineCursor;
+        // let currentPosition = originalPosition;
+        for ( var index = 0; index < iterable.length; index++ ) {
+          const item: T = iterable[ index ];
+          func( { locals: $this.locals, chat: $this, item, index } );
+        }
+        resolve();
+      } catch ( e ) {
+        return reject( e );
+      }
+    } );
+
+    this._addStage( { id, stage: "forEach", promise } );
+    return this;
+  }
+
+  /***
+   * evaluates the Chunk across all stream handlers
+   */
+  private out( chunk: LLM.Stream.Chunk<Options, Prompts, Responses, ToolResults, Metadata> ) {
+    this.streamHandlers.forEach( handler => handler( chunk ) );
+  }
+
+  private _addStage( stage: {
+    id: string;
+    stage: string;
+    promise: ( $this: DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> ) => Promise<void>;
+  } ) {
+    if ( this.pipelineCursor === -1 ) {
+      this.pipeline.push( stage );
+    } else {
+      this.pipeline = [
+        ...this.pipeline.slice( 0, this.nextPosition + 1 ), // 0 to the current stage inclusive
+        stage,
+        ...this.pipeline.slice( this.nextPosition + 1 ) // the next stage to the end
+      ];
+    }
+    // we need to increment the next position anytime a stage is added
+    // as a new stage is always added after the current position to maintain the order
+    this.nextPosition += 1;
+  }
+
+  private _send( { chat, functions, windowSize, responseSize, caller, options }: LLM.Stage.Send<Options, Prompts, Responses, ToolResults, Locals, Metadata> ) {
+    return new Promise<void>( async ( resolve, reject ) => {
+      windowSize = windowSize || chat.settings.windowSize;
+      responseSize = responseSize || chat.settings.minResponseSize;
+      const tools = functions ? Object.keys( chat.functions ).map( k => chat.functions[ k ] ) : [];
+      const functionTokens = chat.llm.functionTokens( tools );
+      const limit = windowSize - responseSize - ( functionTokens.total || 0 );
+      const messages: LLM.Message.Message<Options, Prompts, Responses, ToolResults>[] = chat.window( { chat: chat as any, messages: chat.data.messages, tokenLimit: limit } );
+      const stream = chat.llm.stream( {
+        messages,
+        functions: tools,
+        user: chat.user,
+        options
+      } );
+
+      let buffer = true;
+      let responseText = "";
+      let tokens: LLM.Stream.UsageResponse[ "tokens" ] = {
+        input: 0,
+        output: 0,
+      };
+      const funcs: Array<LLM.Tool.Tool<Options, Prompts, Responses, ToolResults, Locals, Metadata, any> & { args?: string; tool_call_id?: string; }> = [];
+      const responseId = this.storage.newId();
+      try {
+        await ( async () => {
+          for await ( const chunk of stream ) {
+            if ( chunk.type === "usage" ) {
+              tokens = chunk.tokens;
+            } else if ( chunk.type === "tool" ) {
+              const func = chat.functions[ chunk.function.name! ];
+              if ( func !== undefined ) funcs.push( { ...func, args: chunk.function.arguments, tool_call_id: chunk.call_id } );
+              const functionMessage: LLM.Message.FunctionResponse = {
+                id: this.storage.newId(),
+                type: "function",
+                function: {
+                  name: chunk.function.name!,
+                  arguments: chunk.function.arguments,
+                },
+                call_id: chunk.call_id,
+                visibility: LLM.Visibility.SYSTEM,
+                createdAt: new Date(),
+                prompt: caller,
+                tokens: {
+                  message: tokens.output,
+                  input: tokens.input,
+                },
+                window: messages.map( ( { id } ) => id ),
+                tools: tools.length ? tools.map( f => f.name ) : undefined,
+              };
+              chat.data.messages.push( functionMessage );
+              chat.out( {
+                id: functionMessage.id,
+                message: functionMessage,
+                type: "message",
+                chat: this.data.id!
+              } );
+            } else if ( buffer ) {
+              responseText += chunk.text;
+              if ( responseText.length >= 5 ) {
+                chat.out( {
+                  id: responseId,
+                  type: "stream",
+                  chat: chat.data.id!,
+                  text: responseText,
+                } );
+                buffer = false;
+              }
+            } else {
+              responseText += chunk.text;
+              chat.out( {
+                id: responseId,
+                type: "stream",
+                text: chunk.text,
+                chat: chat.data.id!,
+              } );
+            }
+          }
+        } )();
+      } catch ( error ) {
+        // this is a error with the LLM service, 
+        // we assume this error is unrecoverable
+        reject( error );
+        return;
+      }
+      // response has finished streaming
+      if ( responseText.trim() !== "" ) {
+        // we have a textual response
+        const responseMessage: LLM.Message.TextResponse = {
+          id: responseId,
+          type: "response",
+          text: responseText,
+          visibility: LLM.Visibility.OPTIONAL,
+          createdAt: new Date(),
+          tokens: {
+            message: tokens.output,
+            input: tokens.input,
+          },
+          prompt: caller,
+          codeBlocks: extractCodeBlocks( responseText ),
+          window: messages.map( ( { id } ) => id ),
+          tools: tools.length ? tools.map( f => f.name ) : undefined,
+        };
+        chat.data.messages.push( responseMessage );
+        chat.out( { id: responseMessage.id, type: "message", message: responseMessage, chat: chat.data.id! } );
+      }
+
+      // evaluate the functions if any were requested
+      const currentStage = chat.pipeline[ chat.pipelineCursor ]?.stage;
+      for ( const func of funcs ) {
+        const { func: promise, name, args } = func!;
+        const calls = chat.functions[ name ].calls;
+        if ( calls > 2 && currentStage === name ) {
+          // this function has been called multiple times within the current stage
+          //  which is going to be treated as a never resolving loop.
+          reject( new Error( `Function Loop - function: ${ name }` ) );
+          return;
+        }
+        chat.functions[ name ].calls += 1;
+        // todo error handling for args
+        let params: { [ key: string ]: unknown; } = {};
+        try {
+          params = args !== "" ? parseJSON( args! ) : {};
+        } catch ( error ) {
+          const errorMessage: LLM.Message.Error = {
+            id: chat.storage.newId(),
+            type: "error",
+            error: `Error parsing function arguments for ${ name }: ${ error }`,
+            createdAt: new Date(),
+            visibility: LLM.Visibility.SYSTEM,
+            tokens: {
+              message: 0
+            }
+          };
+          errorMessage.tokens.message = chat.llm.tokens( errorMessage );
+          chat.out( { id: errorMessage.id, type: "message", message: errorMessage, chat: chat.data.id! } );
+        }
+        let result: ToolResults;
+        try {
+          const _result = promise( { ...params, locals: chat.locals, chat, tool_call_id: func.tool_call_id } );
+          if ( _result instanceof Promise ) {
+            result = await _result;
+          } else {
+            result = _result;
+          }
+          const toolResult: LLM.Message.ToolResult<ToolResults> = {
+            id: chat.storage.newId(),
+            type: "tool",
+            result,
+            createdAt: new Date(),
+            call_id: func.tool_call_id,
+            visibility: LLM.Visibility.SYSTEM,
+            tokens: {
+              message: 0,
+            }
+          };
+          toolResult.tokens.message = chat.llm.tokens( toolResult );
+          chat.data.messages.push( toolResult );
+          chat.out( { id: toolResult.id, type: "message", message: toolResult, chat: chat.data.id! } );
+        } catch ( error ) {
+          const errorMessage: LLM.Message.Error = {
+            id: chat.storage.newId(),
+            type: "error",
+            error: String( error ),
+            createdAt: new Date(),
+            visibility: LLM.Visibility.SYSTEM,
+            tokens: {
+              message: 0
+            }
+          };
+          errorMessage.tokens.message = chat.llm.tokens( errorMessage );
+          chat.data.messages.push( errorMessage );
+        }
+      }
+
+      if ( !funcs.length ) {
+        // no functions were requested and only a response was received
+        // no further action is needed
+        resolve();
+        return;
+      }
+
+      // function results were added to the chat
+      // we will resend the chat to have the LLM respond to 
+      // the function results
+      const stage = { id: this.storage.newId(), stage: "tool:result", promise: ( $chat: DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> ) => chat._send( { chat: $chat, functions, windowSize, caller } ) };
+      const currentStageIndex = chat.pipelineCursor + 1;
+      if ( currentStageIndex >= chat.pipeline.length ) {
+        // end of the chat, just need to push the new stage
+        chat.pipeline.push( stage );
+      } else {
+        // middle of pipeline, we need to insert the stage in the current position and shift all subsequent stages
+        chat.pipeline = [
+          ...chat.pipeline.slice( 0, currentStageIndex + 1 ),
+          stage,
+          ...chat.pipeline.slice( currentStageIndex + 1 )
+        ];
+      }
+      resolve();
+    } );
+  }
   /**
    * executes the pipeline
    * 
    * @returns {Promise}
    */
-  async execute( { locals, metadata }: { locals?: L; metadata?: M; } = {} ): Promise<DSL<O, L, M>> {
-    return new Promise<DSL<O, L, M>>( async ( resolve, reject ) => {
+  async execute( { locals, metadata }: { locals?: Locals; metadata?: Omit<Metadata, "$">; } = {} ): Promise<DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata>> {
+    return new Promise<DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata>>( async ( resolve, reject ) => {
       this.locals = { ...this.locals, ...locals };
       this.data.metadata = { ...this.data.metadata, ...metadata };
       let error: any = undefined;
       try {
         let hasNext = true;
-        this.out( { type: this.type, id: this.data.id!, state: "open" } );
+        this.out( { id: this.data.id!, type: this.type, state: "open", chat: this.data.id! } );
         while ( hasNext ) {
 
           // check for an exit code
@@ -687,280 +1004,45 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
           const item = this.pipeline[ this.pipelineCursor + 1 ];
           if ( item === undefined ) break;
           const { promise, stage, id } = item;
-          this.out( { id: id, type: "stage", content: stage } );
+          this.out( { id: id, type: "stage", stage, chat: this.data.id!, state: "begin" } );
           await promise( this );
+          this.out( { id: id, type: "stage", stage, chat: this.data.id!, state: "end" } );
           this.pipelineCursor += 1;
+          this.nextPosition = this.pipelineCursor + 1;
         }
       } catch ( e ) {
-        this.out( { id: this.storage.newId(), type: "error", error: e } );
+        const errorMessage: LLM.Message.Error = {
+          id: this.storage.newId(),
+          type: "error",
+          visibility: LLM.Visibility.SYSTEM,
+          createdAt: new Date(),
+          error: e instanceof Error ? e.message : String( e ),
+          tokens: {
+            message: 0
+          }
+        };
+        errorMessage.tokens.message = this.llm.tokens( errorMessage );
+        this.data.messages.push( errorMessage );
+        this.out( { id: errorMessage.id, type: "message", chat: this.data.id!, message: errorMessage } );
         error = e;
       } finally {
         this.llm.close();
-        this.out( { type: this.type, id: this.data.id!, state: "closed" } );
-        const totalTokens = this.data.messages.reduce( ( prev, curr ) => {
-          if ( curr.role === "assistant" ) {
-            prev.outputs += curr.size;
-          } else {
-            prev.inputs += curr.size;
-            if ( curr.windowSize ) prev.inputs += curr.windowSize;
-            if ( curr.functions ) prev.inputs += curr.functions.total;
-          }
-          return prev;
-        }, { inputs: 0, outputs: 0 } );
+        this.out( { id: this.data.id!, type: this.type, state: "closed", chat: this.data.id! } );
+        const totalTokens = this.data.messages
+          .reduce( ( prev, curr ) => {
+            if ( curr.type === "response" || curr.type === "function" ) {
+              prev.inputs += curr.tokens.input || 0;
+              prev.outputs += curr.tokens.message || 0;
+            } else {
+              prev.inputs += curr.tokens.message;
+            }
+            return prev;
+          }, { inputs: 0, outputs: 0 } );
         this.data.inputs = totalTokens.inputs;
         this.data.outputs = totalTokens.outputs;
-        await this.storage.save( this );
+        await this.save();
         error ? reject( error ) : resolve( this );
       }
     } );
-  }
-
-  /**
-   * when called the pipeline will stop executing after the current stage is completed. If an error is provided this
-   * will be thrown as a new Error()
-   */
-  exit( error: Error | 1 = 1 ) {
-    this.exitCode = error;
-  }
-
-  /**
-   * 
-   */
-  pause( func: ( args: { chat: DSL<O, L, M>, locals: L; } ) => ( void | Promise<void> ), id: string = this.storage.newId() ) {
-    const promise = ( $this: DSL<O, L, M> ) => {
-      return new Promise<void>( async ( resolve, reject ) => {
-        const result = func( { locals: $this.locals, chat: $this } );
-        if ( result instanceof Promise ) {
-          result.then( resolve ).catch( reject );
-        } else {
-          resolve();
-        };
-      } );
-    };
-    this.pipeline.push( { id: id, stage: "pause", promise } );
-    return this;
-  }
-
-  /**
-   * sets the position of the pipeline to the stage with the provided id. If a id matches a stage, that stage will be executed
-   * next and continue from that position. If a stage is not found a error is thrown.
-   */
-  moveTo( { id }: { id: string; } ) {
-    const promise = ( $this: DSL<O, L, M> ) => {
-      return new Promise<void>( ( resolve, reject ) => {
-        const index = $this.pipeline.findIndex( ( { id: _id } ) => _id === id );
-        if ( index === -1 ) {
-          return reject( new Error( `No Pipeline Stage with id ${ id }` ) );
-        }
-        // apply the prior index b/c the execute process auto increments the
-        // pipelineCursor by 1 before each stage
-        $this.pipelineCursor = index - 2;
-        resolve();
-      } );
-    };
-    const currentStageIndex = this.pipelineCursor + 1;
-    this.pipeline = [
-      ...this.pipeline.slice( 0, currentStageIndex + 1 ),
-      { id: this.storage.newId(), stage: "seek", promise },
-      ...this.pipeline.slice( currentStageIndex + 1 )
-    ];
-    return this;
-  }
-
-  forEach<T>( iterable: Iterable<T>, func: ForEach<O, L, M, Options | O>, id: string = this.storage.newId() ) {
-    const promise = ( $this: DSL<O, L, M> ) => new Promise<void>( ( resolve, reject ) => {
-      try {
-        for ( const item of iterable ) {
-          func( { locals: $this.locals, chat: $this, item } );
-        }
-        resolve();
-      } catch ( e ) {
-        return reject( e );
-      }
-    } );
-
-    this.pipeline.push( { id, stage: "forEach", promise } );
-    return this;
-  }
-
-  /**
-   * 
-   * @param options : the prompt options
-   * @returns Promise<void>
-   */
-  private _prompt( $chat: DSL<O, L, M>, options: O, prompt?: string ) {
-    return () => new Promise<void>( async ( resolve, reject ) => {
-      const visibility = options.visibility !== undefined ? options.visibility : Visibility.OPTIONAL;
-      const responseSize = ( options.responseSize || $chat.settings.minResponseSize );
-      const targetWindowSize = ( options.windowSize || $chat.settings.windowSize );
-      const includeFunctions = options.functions === undefined;
-      const functions = includeFunctions ? Object.keys( $chat.functions ).map( k => $chat.functions[ k ] ) : [];
-      const functionTokens = $chat.llm.functionTokens( functions );
-      options.content = $chat.llm.prepareContent( options );
-      const messageTokens = $chat.llm.tokens( options.content );
-      const limit = targetWindowSize - responseSize - messageTokens - ( includeFunctions ? functionTokens.total : 0 );
-      const window = $chat.window( { chat: $chat, messages: $chat.data.messages, tokenLimit: limit, key: options.key } );
-      const actualWindowSize = $chat.llm.windowTokens( window );
-      const messageId = this.storage.newId();
-      options.role = options.role || $chat.options.role || "user";
-      const _options = { ...$chat.options, ...options, responseSize, visibility };
-      const message: Message = {
-        id: messageId,
-        key: options.key,
-        role: options.role,
-        size: messageTokens,
-        visibility: visibility,
-        window: window.map( ( { id } ) => id! ),
-        windowSize: actualWindowSize,
-        functions: functions.length === 0 ? undefined : functionTokens,
-        user: $chat.user,
-        createdAt: new Date(),
-        prompt: prompt || messageId,
-        content: _options
-      };
-      $chat.data.messages.push( message );
-      $chat.out( { ...message, type: "message", chat: $chat.data.id! } );
-      const stream = $chat.llm.stream( {
-        messages: [ ...window.map( m => m.content ), _options ],
-        functions: functions,
-        user: $chat.user,
-        ..._options
-      } );
-      let buffer = true;
-      let response = "";
-      const funcs: Array<Function & { args: string; func: ( args: any ) => Promise<Options | O>; tool_call_id?: string; }> = [];
-      const responseId = this.storage.newId();
-      try {
-        await ( async () => {
-          for await ( const chunk of stream ) {
-            if ( chunk.type === "function" ) {
-              const func = $chat.functions[ chunk.name! ];
-              if ( func !== undefined ) funcs.push( { ...func, args: chunk.arguments, tool_call_id: chunk.id } );
-              const functionSize = 0; // todo 
-              const functionUuid = this.storage.newId();
-              const functionMessage: Message = {
-                id: functionUuid,
-                role: "system",
-                content: chunk.message,
-                functions: undefined,
-                size: functionSize,
-                visibility: options.visibility !== undefined ? options.visibility : Visibility.SYSTEM,
-                createdAt: new Date(),
-                prompt: prompt || messageId
-              };
-              $chat.data.messages.push( functionMessage );
-              $chat.out( {
-                ...functionMessage,
-                type: "message",
-                chat: $chat.data.id!
-              } );
-            } else if ( buffer ) {
-              response += chunk.content;
-              if ( response.length >= 5 ) {
-                $chat.out( {
-                  id: responseId,
-                  type: "response",
-                  role: "assistant",
-                  content: response,
-                  chat: $chat.data.id!,
-                  visibility: Visibility.OPTIONAL,
-                  prompt: prompt || messageId
-                } );
-                buffer = false;
-              }
-            } else {
-              response += chunk.content;
-              $chat.out( {
-                id: responseId,
-                type: "response",
-                role: "assistant",
-                content: chunk.content,
-                chat: $chat.data.id!,
-                visibility: visibility,
-                prompt: prompt || messageId
-              } );
-            }
-          }
-        } )();
-      } catch ( error ) {
-        reject( error );
-        return;
-      }
-      // response has finished streaming
-      if ( response.trim() !== "" ) {
-        const blocks = extract( response );
-        const responseSize = $chat.llm.tokens( response ) + 3;
-        const responseMessage: Message = {
-          id: responseId,
-          role: "assistant",
-          content: {
-            content: response,
-            role: "assistant",
-          },
-          size: responseSize,
-          visibility: Visibility.OPTIONAL,
-          codeBlocks: blocks.length > 0 ? blocks : undefined,
-          createdAt: new Date(),
-          prompt: prompt || messageId
-        };
-        $chat.data.messages.push( responseMessage );
-        $chat.out( { ...responseMessage, type: "message", chat: $chat.data.id! } );
-      }
-
-      // evaluate the functions if one was called;
-      let position = 1;
-      const currentStage = $chat.pipeline[ $chat.pipelineCursor ]?.stage;
-      for ( const func of funcs ) {
-        const { func: promise, parameters, name, args } = func!;
-        const calls = $chat.functions[ name ].calls;
-        if ( calls > 2 && currentStage === name ) {
-          // this function has been called multiple times within the current stage
-          //  which is going to be treated as a never resolving loop.
-          reject( new Error( `Function Loop - function: ${ name }` ) );
-          return;
-        }
-        $chat.functions[ name ].calls += 1;
-        // todo error handling for args
-        let params: { [ key: string ]: unknown; } = {};
-        try {
-          params = args !== "" ? JSON.parse( args! ) : {};
-        } catch ( error ) {
-          $chat.out( { id: this.storage.newId(), type: "error", error } );
-        }
-        let result: O | Options;
-        try {
-          result = await promise( { ...params, locals: $chat.locals, chat: $chat, tool_call_id: func.tool_call_id } );
-          result.content = $chat.llm.prepareContent( result );
-        } catch ( error ) {
-          result = {
-            content: `${ error }`
-          };
-        }
-        result.role = "tool";
-        result.visibility = options.visibility !== undefined ? options.visibility : Visibility.SYSTEM;
-        const stage = { id: this.storage.newId(), stage: name, promise: $chat._prompt( $chat, { ...$chat.options, ...result } as O, prompt || messageId ) };
-        const currentStageIndex = $chat.pipelineCursor + 1;
-        if ( currentStageIndex >= $chat.pipeline.length ) {
-          // end of the chat, just need to push the new stage
-          $chat.pipeline.push( stage );
-        } else {
-          // middle of pipeline, we need to insert the stage in the current position and shift all subsequent stages
-          $chat.pipeline = [
-            ...$chat.pipeline.slice( 0, currentStageIndex + position + 1 ),
-            stage,
-            ...$chat.pipeline.slice( currentStageIndex + position + 1 )
-          ];
-        }
-        position += 1;
-      }
-      resolve();
-    } );
-  }
-
-  /***
-   * evaluates the Chunk across all stream handlers
-   */
-  private out( chunk: Chunk ) {
-    this.streamHandlers.forEach( handler => handler( chunk ) );
   }
 }

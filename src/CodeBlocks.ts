@@ -1,5 +1,5 @@
 import { Grammars, IToken } from "ebnf";
-import { CodeBlock } from "./Chat";
+import { LLM } from "./definitions";
 
 const grammar = `
 message     ::= TEXT* WS* ( block ) WS* TEXT* WS* message*  /* Represents a message with zero or more blocks */
@@ -12,17 +12,17 @@ TEXT        ::= [^\`] | "\`" [^\`]                          /* Any character exc
 
 const parser = new Grammars.W3C.Parser( grammar );
 
-const collect = ( token: IToken ): CodeBlock[] => {
+const collect = ( token: IToken ): LLM.CodeBlock[] => {
   return token.children.flatMap( child => {
     if ( child.type === "message" ) return collect( child );
     return child.children.reduce( ( prev, curr ) => {
       prev[ curr.type ] = curr.text.trim();
       return prev;
-    }, {} as CodeBlock & { [ key: string ]: any; } );
+    }, {} as LLM.CodeBlock & { [ key: string ]: any; } );
   } );
 };
 
-export const extract = ( text: string ): CodeBlock[] => {
+export const extract = ( text: string ): LLM.CodeBlock[] => {
   const token = parser.getAST( text );
   if ( token === null ) return [];
   const blocks = collect( token );

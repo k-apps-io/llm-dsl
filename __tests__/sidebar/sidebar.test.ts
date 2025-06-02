@@ -1,15 +1,9 @@
 import { v4 as uuid } from "uuid";
-import { DSL, Locals } from "../../src/DSL";
 import { CODE_BLOCK_RULE } from "../../src/Rules";
-import { ChatGPT, Options } from "../ChatGPT";
+import { ChatGPT } from "../ChatGPT";
 
-interface L extends Locals {
-  key: string;
-}
 
-const chat = new DSL<Options, L, undefined>( {
-  llm: new ChatGPT( { model: "gpt-3.5-turbo" } )
-} );
+const chat = new ChatGPT( { model: "gpt-4o-mini" } );
 chat
   .setUser( "1234" )
   .rule( CODE_BLOCK_RULE )
@@ -20,7 +14,11 @@ chat
       type: "object",
       properties: {}
     },
-    func: () => new Promise<Options>( ( resolve, reject ) => resolve( { content: "success" } ) )
+    func: ( { tool_call_id } ) => new Promise( ( resolve, reject ) => resolve( {
+      role: "tool",
+      content: "success",
+      tool_call_id: tool_call_id!
+    } ) )
   } )
   .setLocals( {
     key: uuid()

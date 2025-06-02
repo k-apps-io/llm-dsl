@@ -1,11 +1,8 @@
-import { Visibility, localFileStream } from "../../src";
-import { DSL } from "../../src/DSL";
-import { ChatGPT, Options } from "../ChatGPT";
+import { LLM, localFileStream } from "../../src";
+import { ChatGPT } from "../ChatGPT";
 import { getRandomNumber } from "../utilities";
 
-const chat = new DSL<Options, any, undefined>( {
-  llm: new ChatGPT( { model: "gpt-3.5-turbo" } )
-} );
+const chat = new ChatGPT( { model: "gpt-4o-mini" } );
 
 describe( "push", () => {
 
@@ -18,16 +15,20 @@ describe( "push", () => {
     await $chat
       .push( {
         key: "1",
-        content: "this is the first message"
+        context: "this is the first message"
       } )
       .push( {
         key: "2",
-        content: "this is the second message"
+        context: "this is the second message"
       } )
-      .stream( localFileStream( { directory: __dirname, filename: 'pushing2' } ) );
+      .pipe( localFileStream( { directory: __dirname, filename: 'pushing2' } ) )
+      .execute();
 
-    expect( $chat.data.messages[ 0 ].key ).toBe( "1" );
-    expect( $chat.data.messages[ 1 ].key ).toBe( "2" );
+    const actual = $chat.data.messages
+      .filter( m => m.type === "context" )
+      .map( m => m.key );
+    const expected = [ "1", "2" ];
+    expect( actual ).toMatchObject( expected );
   } );
 
   /**
@@ -40,77 +41,92 @@ describe( "push", () => {
     for ( let index = 0; index <= num; index++ ) {
       $chat.push( {
         key: String( index ),
-        content: `this is message #${ index }`
+        context: `this is message #${ index }`
       } );
     }
     await $chat
-      .stream( localFileStream( { directory: __dirname, filename: 'pushingRandomized' } ) );
-    for ( let index = 0; index <= num; index++ ) {
-      expect( $chat.data.messages[ index ].key ).toBe( String( index ) );
-    }
+      .pipe( localFileStream( { directory: __dirname, filename: 'pushingRandomized' } ) )
+      .execute();
+    const acutal = $chat.data.messages
+      .filter( m => m.type === "context" )
+      .map( m => m.key );
+    const expected = Array.from( { length: num + 1 }, ( _, index ) => String( index ) );
+    expect( acutal ).toMatchObject( expected );
   } );
 
   /**
    * this test is to validate that pushing messages around a prompt maintains
    * the order in the chat data
    */
-  it( "should push 2 messages around a prompt ", async () => {
+  it( "should push 2 messages around a prompt", async () => {
     const $chat = chat.clone();
     await $chat
       .push( {
         key: "1",
-        content: "today is not a good day"
+        context: "today is not a good day"
       } )
       .prompt( {
         key: "2",
-        content: "Can you tell me a joke"
+        prompt: {
+          role: "user",
+          content: "Can you tell me a joke to cheer me up?"
+        }
       } )
       .push( {
         key: "3",
-        content: "that was funny"
+        context: "that was funny"
       } )
-      .stream( localFileStream( { directory: __dirname, filename: 'promptingWithPush' } ) );
+      .pipe( localFileStream( { directory: __dirname, filename: 'promptingWithPush' } ) )
+      .execute();
 
-    expect( $chat.data.messages[ 0 ].key ).toBe( "1" );
-    expect( $chat.data.messages[ 1 ].key ).toBe( "2" );
-    // position 2 will be response from the prompt
-    expect( $chat.data.messages[ 3 ].key ).toBe( "3" );
+    const actual = $chat.data.messages
+      .filter( m => m.type === "context" || m.type === "prompt" )
+      .map( m => m.key );
+    const expected = [ "1", "2", "3" ];
+    expect( actual ).toMatchObject( expected );
   } );
 
 
   /**
    * this test is to validate that pushing a message maintains the order
-   * around a prompt for each
+   * around a forEach stage
    */
-  it( "should push messages around a promptForEach stage", async () => {
+  it( "should push messages around a forEach prompt", async () => {
     const $chat = chat.clone();
     await $chat
       .push( {
         key: "1",
-        content: "Please reverse the order of the characters for the following value"
+        context: "Please reverse the order of the characters for the following value"
       } )
-      .promptForEach( () => {
-        return [ "Jon Snow", "Game of Thrones" ].map( value => ( {
-          content: `${ value }`
-        } ) );
+      .forEach( [ "Jon Snow", "Game of Thrones" ], ( { chat, item } ) => {
+        chat.prompt( {
+          key: item,
+          prompt: {
+            role: "user",
+            content: item
+          }
+        } );
       } )
-      .push( {
+      .append( {
         key: "3",
-        content: "the final message"
+        context: "the final message"
       } )
-      .stream( localFileStream( { directory: __dirname, filename: 'promptForEach' } ) );
+      .pipe( localFileStream( { directory: __dirname, filename: 'promptForEach' } ) )
+      .execute();
 
-    expect( $chat.data.messages[ 0 ].key ).toBe( "1" );
-    // position 1-4 will be the prompt and responses respectively
-    expect( $chat.data.messages[ 5 ].key ).toBe( "3" );
-  } );
+    const actual = $chat.data.messages
+      .filter( m => m.type === "context" || m.type === "prompt" )
+      .map( m => m.key );
+    const expected = [ "1", "Jon Snow", "Game of Thrones", "3" ];
+    expect( actual ).toMatchObject( expected );
+  }, 60000 );
 
 
   /**
-   * this test is to validate that pushing a message maintains the order
+   * this test is to validate that appending a message maintains the order
    * around a prompt for each
    */
-  it( "should push within a branchForEach", async () => {
+  it( "should push within a forEach", async () => {
     const $chat = chat.clone();
     const testWords: string[] = [
       "Jon Snow",
@@ -120,41 +136,51 @@ describe( "push", () => {
     await $chat
       .push( {
         key: "1",
-        content: "reverse the order of the characters of the following value."
+        context: "reverse the order of the characters of the following value."
       } )
-      .branchForEach( () => {
-        return testWords.map( value => ( {
-          key: "value",
-          content: `${ value }`
-        } ) );
+      .forEach( testWords, ( { chat, item, index } ) => {
+        chat.prompt( {
+          key: item,
+          prompt: {
+            role: "user",
+            content: item
+          }
+        } )
+          .push( {
+            key: `pushedMessage-${ index }`,
+            context: "Thanks",
+            visibility: LLM.Visibility.EXCLUDE
+          } );
       } )
-      .push( {
-        key: "pushedMessage",
-        content: "Thanks",
-        visibility: Visibility.EXCLUDE
-      } )
-      .join()
-      .stream( localFileStream( { directory: __dirname, filename: 'branchForEach', append: false } ) );
+      .pipe( localFileStream( { directory: __dirname, filename: 'forEach', append: false } ) )
+      .execute();
+    const actual = $chat.data.messages
+      .filter( m => m.type === "prompt" || m.type === "context" )
+      .map( m => m.key );
 
-    expect( $chat.data.messages[ 0 ].key ).toBe( "1" );
-    for ( let index = 0; index < testWords.length; index++ ) {
-      const position = index * 3 + 1;
-      expect( $chat.data.messages[ position ].key ).toBe( "value" );
-      expect( $chat.data.messages[ position ].content ).toBe( testWords[ index ] );
-      expect( $chat.data.messages[ position + 2 ].key ).toBe( "pushedMessage" );
-    }
-  } );
+    const expected = [
+      "1",
+      ...testWords.flatMap( ( word, index ) => [ word, `pushedMessage-${ index }` ] ),
+    ];
+    expect( actual ).toMatchObject( expected );
+  }, 60000 );
 
   it( "should push a message within a pause stage", async () => {
     const $chat = chat.clone();
     await $chat
       .pause( ( { chat: $this } ) => new Promise<void>( ( resolve, reject ) => {
         $this.push( {
-          content: "this was pushed within a pause",
+          context: "this was pushed within a pause",
         } );
         resolve();
       } ) )
-      .stream( localFileStream( { directory: __dirname, filename: 'pushingWithinPause' } ) );
+      .pipe( localFileStream( { directory: __dirname, filename: 'pushingWithinPause' } ) )
+      .execute();
+    const actual = ( $chat.data.messages
+      .filter( m => m.type === "context" ) as LLM.Message.Context[] )
+      .map( m => m.context );
+    const expected = [ "this was pushed within a pause" ];
+    expect( actual ).toMatchObject( expected );
     const expectedStages = [
       "pause",
       "push"
@@ -172,11 +198,19 @@ describe( "push", () => {
       } )
       .pause( ( { chat: $this } ) => new Promise<void>( ( resolve, reject ) => {
         $this.push( {
-          content: "this was pushed within a pause",
+          context: "this was pushed within a pause",
         } );
         resolve();
       } ) )
-      .stream( localFileStream( { directory: __dirname, filename: 'pushingWithinPause' } ) );
+      .pipe( localFileStream( { directory: __dirname, filename: 'pushingWithinPause' } ) )
+      .execute();
+
+    const actual = ( $chat.data.messages
+      .filter( m => m.type === "context" ) as LLM.Message.Context[] )
+      .map( m => m.context );
+    const expected = [ "this was pushed within a pause" ];
+    expect( actual ).toMatchObject( expected );
+
     const expectedStages = [
       "rule",
       "pause",

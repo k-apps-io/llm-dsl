@@ -1,91 +1,106 @@
+import { LLM } from "./definitions";
+import { parseJSON } from "./utilities";
 
+type JSONPrimitive = string | number | boolean | null;
 
-import JSON from "json5";
-import { jsonrepair } from "jsonrepair";
-import { Message } from "./Chat";
-import { DSL, Locals, Metadata, Options } from "./DSL";
+type JSONValue =
+  | JSONPrimitive
+  | JSONObject
+  | JSONArray;
 
-export interface ResponseStageArgs<O extends Options, L extends Locals, M extends Metadata> {
-  response: Message,
-  locals: L;
-  chat: DSL<O, L, M>;
+export interface JSONObject {
+  [ key: string ]: JSONValue;
 }
-export type ResponseStage<O extends Options, L extends Locals, M extends Metadata> = ( args: ResponseStageArgs<O, L, M> ) => Promise<void>;
 
-/**
- * cleans text that is assumed to be json. This text will also be repaired to be JSON if possible
- * @param text a JSON string
- * @returns a JSON string
- */
-export const cleanJSON = ( text: string ): string => {
-  // convert fractions to the decimal version e.g. // values like `: 1/2` -> : 0.5
-  text = text.replaceAll( /:\s*?(\d+)\/(\d+)/g, ( _, numerator, denominator ) => {
-    // Convert fraction to decimal
-    return `: ${ parseFloat( numerator ) / parseFloat( denominator ) }`;
-  } );
-  text = jsonrepair( text );
-  return text;
-};
+export interface JSONArray extends Array<JSONValue> { }
 
-type JSONValue = string | number | boolean | null | { [ key: string ]: JSONValue; } | JSONValue[];
+export type JSON = JSONArray | JSONObject;
 
-interface ExpectJSON {
-  /**
-   * the number of JSON code blocks to expect in the response. When the response matches you will find a JSON value
-   * in chat.locals.$blocks as either a single JSONValue when blocks is 1 otherwise a JSONValue[].
-   * 
-   * if not defined the default value is 1
-   */
-  blocks?: number;
-  /**
-   * an optional prompt to send to the LLM if a json code block is missing from the response or the code blocks provided do not
-   * include any json code blocks.
-   */
-  errorPrompt?: string;
-  /**
-   * how to handle when the number of json blocks in the response does not match the number of blocks expected. When true, a prompt
-   * will be sent to the LLM requesting the exact number of json code blocks.
-   * 
-   * the default is true
-   */
-  exact?: boolean;
-}
+// CASE 1: Exactly 1 block
+export function json<
+  Options extends LLM.Model.Options = LLM.Model.Options,
+  Prompts extends LLM.Model.Prompts = LLM.Model.Prompts,
+  Responses extends LLM.Model.Responses = LLM.Model.Responses,
+  ToolResults extends LLM.Model.ToolResults = LLM.Model.ToolResults,
+  Locals extends LLM.Locals = LLM.Locals,
+  Metadata extends LLM.Metadata = LLM.Metadata
+>( config: { blocks?: 1; errorPrompt?: string; exact?: boolean; } ): LLM.Stage.Expect<
+  Options, Prompts, Responses, ToolResults, Locals, Metadata,
+  { json: JSON; }
+>;
+
+// CASE 2: More than 1 block
+export function json<
+  Options extends LLM.Model.Options = LLM.Model.Options,
+  Prompts extends LLM.Model.Prompts = LLM.Model.Prompts,
+  Responses extends LLM.Model.Responses = LLM.Model.Responses,
+  ToolResults extends LLM.Model.ToolResults = LLM.Model.ToolResults,
+  Locals extends LLM.Locals = LLM.Locals,
+  Metadata extends LLM.Metadata = LLM.Metadata
+>( config: { blocks: number; errorPrompt?: string; exact?: boolean; } ): LLM.Stage.Expect<
+  Options, Prompts, Responses, ToolResults, Locals, Metadata,
+  { json: JSON[]; }
+>;
+
 /**
  * this expects that a response includes json codeBlocks. Each codeBlock will be evaluated into a usuable JSON object which will be 
  * made accessible in the chat locals as $blocks.
  */
-export const json = ( { blocks, errorPrompt, exact }: ExpectJSON = { blocks: 1, exact: true } ): ResponseStage<any, any, any> => {
-  const handler: ResponseStage<any, any, any> = ( { response, chat } ) => {
-    return new Promise( ( resolve, expect ) => {
-      if ( response.codeBlocks === undefined ) {
-        expect( errorPrompt || "1 or more json code blocks were expected in the response e.g. ```json /** ... */```" );
-        return;
-      }
-      const _blocks: {}[] = [];
-      let blockNumber = 1;
-      for ( const { lang, code } of response.codeBlocks! ) {
-        if ( lang !== "json" ) continue;
-        let json: { [ key: string ]: unknown; } = {};
-        try {
-          json = JSON.parse( cleanJSON( code ) );
-          _blocks.push( json );
-          blockNumber += 1;
-        } catch ( error ) {
-          expect( `could not JSON.parse code block #${ blockNumber }. Error details: ${ error } - please update the code block` );
+
+export function json<
+  Options extends LLM.Model.Options = LLM.Model.Options,
+  Prompts extends LLM.Model.Prompts = LLM.Model.Prompts,
+  Responses extends LLM.Model.Responses = LLM.Model.Responses,
+  ToolResults extends LLM.Model.ToolResults = LLM.Model.ToolResults,
+  Locals extends LLM.Locals = LLM.Locals,
+  Metadata extends LLM.Metadata = LLM.Metadata
+>( config: { blocks?: number; errorPrompt?: string; exact?: boolean; } = { blocks: 1, exact: true } ) {
+  const { blocks = 1, errorPrompt, exact = true } = config;
+
+  const handler: LLM.Stage.Expect<Options, Prompts, Responses, ToolResults, Locals, Metadata, { json: JSON | JSON[]; }> =
+    ( { response } ) => {
+      return new Promise( ( resolve, expect ) => {
+        if ( !response.codeBlocks ) {
+          expect( errorPrompt || "1 or more json code blocks were expected..." );
           return;
         }
-      }
-      if ( _blocks.length === 0 ) {
-        return expect( errorPrompt || "1 or more json code blocks are expected in the response e.g. ```json /** ... */```" );
-      } else if ( _blocks.length !== blocks && exact ) {
-        const was_or_were = blocks === 1 ? "was" : "were";
-        const _was_or_were = _blocks.length === 1 ? "was" : "were";
-        return expect( `${ blocks } json code block(s) ${ was_or_were } expected but ${ _blocks.length } ${ _was_or_were } in the response` );
-      } else {
-        chat.locals.$blocks = blocks === 1 ? _blocks[ 0 ] : _blocks;
-      }
-      resolve();
-    } );
-  };
+
+        const _blocks: JSON[] = [];
+        let blockNumber = 1;
+        for ( const { lang, code } of response.codeBlocks ) {
+          if ( lang !== "json" ) continue;
+          try {
+            _blocks.push( parseJSON( code ) as JSON );
+            blockNumber++;
+          } catch ( err ) {
+            resolve( {
+              type: "error",
+              error: `could not JSON.parse code block #${ blockNumber }: ${ err }`
+            } );
+            return;
+          }
+        }
+
+        if ( _blocks.length === 0 ) {
+          resolve( {
+            type: "error",
+            error: errorPrompt || "1 or more json code blocks expected"
+          } );
+          return;
+        }
+
+        if ( exact && _blocks.length !== blocks ) {
+          resolve( {
+            type: "error",
+            error: `${ blocks } json block(s) expected but got ${ _blocks.length }`
+          } );
+          return;
+        }
+
+        const result = blocks === 1 ? _blocks[ 0 ] : _blocks;
+        resolve( { json: result } );
+      } );
+    };
+
   return handler;
-};
+}

@@ -1,15 +1,15 @@
 import { toCodeBlock } from "../../src";
-import { DSL, Locals } from "../../src/DSL";
+import { LLM } from "../../src/definitions";
 import { LocalStorage } from "../../src/Storage";
 import { localFileStorage, localFileStream } from "../../src/Stream";
-import { ChatGPT, Options } from "../ChatGPT";
-interface ChatLocals extends Locals {
+import { ChatGPT } from "../ChatGPT";
+
+interface ChatLocals extends LLM.Locals {
   wasCalled: boolean;
 }
-const chat = new DSL<Options, ChatLocals, undefined>( {
-  llm: new ChatGPT( {
-    model: "gpt-3.5-turbo",
-  } ),
+const chat = new ChatGPT<ChatLocals>( {
+  model: "gpt-4o-mini",
+}, {
   storage: LocalStorage( { directory: __dirname } ),
   locals: {
     wasCalled: false
@@ -19,7 +19,7 @@ describe( ".function", () => {
   it( 'expectFunctionCall', async () => {
     const $chat = await chat
       .clone()
-      .function<{ unit?: "Fahrenheit" | "Celsius"; }>( {
+      .tool<{ unit?: "Fahrenheit" | "Celsius"; }>( {
         name: "getTheCurrentWeather",
         parameters: {
           "type": "object",
@@ -41,7 +41,7 @@ describe( ".function", () => {
             };
             resolve( {
               role: "tool",
-              tool_call_id,
+              tool_call_id: tool_call_id || "getTheCurrentWeather",
               content: toCodeBlock( "json", JSON.stringify( weather ) ),
             } );
           } );
@@ -52,9 +52,12 @@ describe( ".function", () => {
         requirement: "all temperature readings must be in Celsius"
       } )
       .prompt( {
-        content: "what's the weather like today?",
+        prompt: {
+          role: "user",
+          content: "what's the weather like today?",
+        }
       } )
-      .response( ( { response, locals, chat: $this } ) => {
+      .response( ( { locals, chat } ) => {
         return new Promise<void>( ( resolve, reject ) => {
           if ( !locals.wasCalled ) {
             reject( "function did not executed" );
@@ -63,7 +66,8 @@ describe( ".function", () => {
           resolve();
         } );
       } )
-      .stream( localFileStream( { directory: __dirname, filename: 'expectFunctionCall' } ) );
+      .pipe( localFileStream( { directory: __dirname, filename: 'expectFunctionCall' } ) )
+      .execute();
     localFileStorage( { directory: __dirname, chat: $chat, filename: 'expectFunctionCall' } );
     expect( $chat.locals.wasCalled ).toBeTruthy();
   }, 60000 );
@@ -71,26 +75,29 @@ describe( ".function", () => {
   it( 'callsFunction', async () => {
     const $chat = await chat
       .clone()
-      .function( {
+      .tool( {
         name: "myFunction",
         parameters: {
           "type": "object",
           "properties": {}
         },
         description: "a function available on the DSL",
-        func: ( { locals, chat: $this } ) => {
+        func: ( { locals, tool_call_id } ) => {
           return new Promise( ( resolve, reject ) => {
             locals.wasCalled = true;
             resolve( {
-              content: `hello`,
-              functions: false
+              role: "tool",
+              tool_call_id: tool_call_id || "myFunction",
+              content: `hello`
             } );
           } );
         }
       } )
-      .call( "myFunction" )
-      .stream( localFileStream( { directory: __dirname, filename: 'callsFunction' } ) );
+      .call( { name: "myFunction" } )
+      .pipe( localFileStream( { directory: __dirname, filename: 'callsFunction' } ) )
+      .execute();
+
     localFileStorage( { directory: __dirname, chat: $chat, filename: 'callsFunction' } );
     expect( $chat.locals.wasCalled ).toBeTruthy();
-  } );
+  }, 60000 );
 } );

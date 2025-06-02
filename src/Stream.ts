@@ -1,78 +1,101 @@
 import { createWriteStream, writeFileSync, WriteStream } from "fs";
-import { Message } from "./Chat";
 import { DSL } from "./DSL";
+import { LLM } from "./definitions";
 
-
-/**
- * this chunk indicates a new chat or sidebar
- */
-interface ChatChunk {
-  id: string;
-  type: "chat" | "sidebar";
-  state: "open" | "closed";
-  metadata?: { [ key: string ]: unknown; };
+interface Options {
+  debug?: true; // when defined, we will emit everything
 }
 
-/**
- * this chunk represents a response stream which contain parts of the response
- */
-interface ResponseChunk extends Omit<Message, "size" | "codeBlocks" | "user" | "createdAt" | "window"> {
-  type: "response";
-  chat: string;
+interface MainOptions extends Options {
+  pipe: ( text: string ) => void;
 }
 
-/**
- * this chunk will represent a completed message in the chat and emitted when a Message is generated e.g. prompt, push, response, etc.
- */
-interface MessageChunk extends Message {
-  id: string;
-  type: "message";
-  chat: string;
-}
-/**
- * this chunk is emitted when a new stage in the pipeline is executed. The content will be the stage name which closely aligns
- * with the pipeline function name.
- */
-interface StageChunk {
-  id: string;
-  type: "stage";
-  content: string;
-}
-
-/**
- * this chunk is emitted when an error occurred in the pipeline that was unhandled. The error can be received here as well
- * as caught in a catch block or callback.
- */
-interface ErrorChunk {
-  id: string;
-  type: "error";
-  error: unknown;
-}
-
-export type Chunk = ChatChunk | ResponseChunk | MessageChunk | StageChunk | ErrorChunk;
-
-export type StreamHandler = ( chunk: Chunk ) => void;
-
-export const stdout = (): StreamHandler => {
+const main = ( { pipe, debug }: MainOptions ): LLM.Stream.Handler<any, any, any, any, any> => {
   let id: string | undefined = undefined;
-  const handler: StreamHandler = ( chunk ) => {
-    // skip these
-    if ( chunk.type === "chat" || chunk.type === "sidebar" || chunk.type === "stage" ) return;
+  let lastChunkType: string | undefined = undefined;
 
-    // write a message if it's not associated with a response
-    if ( ( chunk.type === "message" && chunk.id !== id ) ) process.stdout.write( chunk.content );
-    if ( ( chunk.type === "response" ) ) process.stdout.write( JSON.stringify( chunk.content, null, 2 ) );
-    if ( chunk.type === "error" ) process.stderr.write( String( chunk.error ) );
+  const handler: LLM.Stream.Handler<any, any, any, any, any> = ( chunk ) => {
+
+    if ( lastChunkType !== chunk.type ) {
+      pipe( `\n[${ chunk.type.toUpperCase() }] ` );
+      lastChunkType = chunk.type;
+    }
+
+    switch ( chunk.type ) {
+      case "chat":
+      case "sidebar":
+        pipe( `ID: ${ chunk.id }, State: ${ chunk.state }\n` );
+        break;
+
+      case "stage":
+        pipe( `${ chunk.stage } (${ chunk.state })\n` );
+        break;
+
+      case "stream":
+        pipe( chunk.text );
+        break;
+
+      case "message":
+        switch ( chunk.message.type ) {
+          case "prompt":
+            pipe( ` [PROMPT] ${ JSON.stringify( chunk.message.prompt, null, 2 ) }\n` );
+            break;
+
+          case "response":
+            // this content is already received by the stream chunk
+            break;
+
+          case "function":
+            // this content is already received by the stream chunk
+            break;
+
+          case "tool":
+            pipe( ` [TOOL RESULT] ${ JSON.stringify( chunk.message.result, null, 2 ) }\n` );
+            break;
+
+          case "instruction":
+            pipe( ` [INSTRUCTION] ${ chunk.message.instruction }\n` );
+            break;
+
+          case "error":
+            pipe( ` [ERROR] ${ String( chunk.message.error ) }\n` );
+            break;
+
+          case "rule":
+            pipe( ` [RULE] ${ chunk.message.rule }\n` );
+            break;
+
+          case "context":
+            pipe( ` [CONTEXT] ${ chunk.message.context }\n` );
+            break;
+
+          default:
+            pipe( ` [UNKNOWN] ${ JSON.stringify( chunk.message, null, 2 ) }\n` );
+            break;
+        }
+        break;
+
+      default:
+        pipe( `[UNKNOWN] ${ JSON.stringify( chunk, null, 2 ) }\n` );
+        break;
+    }
 
     if ( id === undefined || chunk.id !== id ) {
-      process.stdout.write( "\n" );
+      pipe( "\n" );
       id = chunk.id;
     }
   };
+
   return handler;
 };
 
-interface FileSystemOptions {
+interface StdoutOptions extends Options { }
+
+export const stdout = ( options?: StdoutOptions ): LLM.Stream.Handler<any, any, any, any, any> => {
+  return main( { ...options, pipe: process.stdout.write } );
+};
+
+interface FileSystemOptions extends Options {
   /**
    * the directory to write the file to, the directory will not be created if it does not already exist.
    */
@@ -80,8 +103,9 @@ interface FileSystemOptions {
   /**
    * the name of the file, when not defined the chat id will be used
    */
-  filename?: string;
+  filename: string;
 }
+
 interface LocalFileStream extends FileSystemOptions {
   /**
    * whether to appended the chat stream to the target file. Default behavior is to append, when false the file will be overwriten
@@ -95,43 +119,25 @@ interface LocalFileStream extends FileSystemOptions {
 /**
  * a stream handler that will write the stream the chat pipeline to a local file
  */
-export const localFileStream = ( { directory, filename, append, timestamps }: LocalFileStream ): StreamHandler => {
+export const localFileStream = ( { directory, filename, append, timestamps }: LocalFileStream ): LLM.Stream.Handler<any, any, any, any, any> => {
   let id: string;
   let stage: string;
   let fileStream: WriteStream;
   const flags = append === undefined || append ? "a" : undefined;
   timestamps = timestamps ? true : false;
-  const handler: StreamHandler = ( chunk ) => {
-    if ( chunk.type === "chat" && chunk.state === "open" ) {
-      fileStream = createWriteStream( `${ directory }/${ filename || chunk.id }.log`, { encoding: "utf-8", flags: flags } );
+  return main( {
+    pipe: ( text ) => {
+      if ( !fileStream ) {
+        filename = `${ directory }/${ filename }.log`;
+        fileStream = createWriteStream( filename, { flags, encoding: "utf8" } );
+      }
+      fileStream.write( text );
     }
-    if ( chunk.type === "chat" || chunk.type === "sidebar" ) {
-      if ( stage ) fileStream.write( `\n// ${ stage }: end` );
-      fileStream?.write( `\n// ${ chunk.type } - ${ chunk.id }: ${ chunk.state }` );
-      if ( chunk.state === "closed" ) return fileStream.end();
-    }
-    if ( id === undefined || chunk.id !== id ) {
-      fileStream.write( "\n" );
-      id = chunk.id;
-    }
-    if ( chunk.type === "stage" ) {
-      if ( stage ) fileStream.write( `\n// ${ stage }: end` );
-      stage = chunk.content;
-      let line = `\n// ${ stage }: begin`;
-      if ( timestamps ) line += ` ${ new Date() }`;
-      fileStream.write( line );
-    }
-    if ( ( chunk.type === "message" ) ) {
-      const content = typeof chunk.content === "string" ? chunk.content : JSON.stringify( chunk.content, null, 2 );
-      fileStream.write( content );
-    }
-    if ( chunk.type === "error" ) fileStream.write( String( chunk.error ) );
-  };
-  return handler;
+  } );
 };
 
 interface WriteOptions extends FileSystemOptions {
-  chat: DSL<any, any, any>;
+  chat: DSL<any, any, any, any, any, any>;
   /**
    * Adds indentation, white space, and line break characters to the return-value JSON text to make it easier to read.
    * 

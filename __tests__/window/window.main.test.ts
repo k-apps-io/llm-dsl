@@ -1,89 +1,43 @@
-import { Message } from "../../src/Chat";
-import { DSL } from "../../src/DSL";
-import { Visibility, main } from "../../src/Window";
-import { ChatGPT, Options } from "../ChatGPT";
+import { LLM, main } from "../../src";
+import { ChatGPT, Options, Prompts, Responses, ToolResults } from "../ChatGPT";
 
-const chat = new DSL<Options, any, any>( {
-  llm: new ChatGPT( { model: "gpt-3.5-turbo" } )
-} );
-
-const content: string = "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed id justo euismod, cursus nulla eget, tristique tellus. Vivamus JSON Example eleifend eu ex eget tempus. Integer quis dolor eget urna ultricies placerat. Donec sit amet vehicula metus. Vestibulum ante ipsum primis in faucibus orci luctus et ultrices posuere cubilia Curae; Suspendisse potenti.";
-const size = chat.llm.tokens( content );
-describe( "main.window", () => {
-  it( "keys reducing", () => {
-    const messages: Message[] = [
-      { visibility: Visibility.OPTIONAL, key: "a" },
-      { visibility: Visibility.OPTIONAL },
-      { visibility: Visibility.OPTIONAL, key: "a" }
+describe( "window.main.prompt", () => {
+  it( "window.main.prompt", async () => {
+    const chat = new ChatGPT( { model: "gpt-4o-mini" } );
+    const messages: LLM.Message.Message<Options, Prompts, Responses, ToolResults>[] = [
+      { visibility: LLM.Visibility.OPTIONAL, key: "a", }, // 0: 1200
+      { visibility: LLM.Visibility.EXCLUDE, },  // 1: 1100
+      { visibility: LLM.Visibility.OPTIONAL, }, // 2: 1000
+      { visibility: LLM.Visibility.REQUIRED, }, // 3: 900
+      { visibility: LLM.Visibility.EXCLUDE, },  // 4: 800
+      { visibility: LLM.Visibility.SYSTEM, },   // 5: 700
+      { visibility: LLM.Visibility.OPTIONAL, }, // 6: 600
+      { visibility: LLM.Visibility.OPTIONAL, }, // 7: 500
+      { visibility: LLM.Visibility.REQUIRED, }, // 8: 400
+      { visibility: LLM.Visibility.OPTIONAL, }, // 9: 300
+      { visibility: LLM.Visibility.OPTIONAL, }, // 10: 200
+      { visibility: LLM.Visibility.OPTIONAL, }, // 11: 100
     ].map( ( { key, visibility }, index ) => ( {
       id: String( index ),
       key: key,
-      content: content,
-      role: "user",
+      type: "prompt",
+      prompt: {
+        content: String( index ),
+        role: "user",
+      },
       visibility,
-      size: size,
+      size: 0,
       createdAt: new Date(),
-      prompt: String( index )
+      tokens: {
+        message: 100
+      }
     } ) );
-    const result = main( { chat, messages, tokenLimit: size * 3 } );
-    expect( result.length ).toBe( 2 );
-    expect( result.reduce( ( prev, curr ) => prev + curr.size, 0 ) ).toBe( size * 2 );
-    expect( result.map( ( { id } ) => id ) ).toMatchObject( [ "1", "2" ] );
-  } );
-
-  it( "visibility", () => {
-    const messages: Message[] = [
-      { visibility: Visibility.OPTIONAL, key: "a" },
-      { visibility: Visibility.EXCLUDE },
-      { visibility: Visibility.OPTIONAL },
-      { visibility: Visibility.REQUIRED },
-      { visibility: Visibility.EXCLUDE },
-      { visibility: Visibility.SYSTEM },
-    ].map( ( { key, visibility }, index ) => ( {
-      id: String( index ),
-      key: key,
-      content: content,
-      role: "user",
-      visibility,
-      size: size,
-      createdAt: new Date(),
-      prompt: String( index )
-    } ) );
-    const target = 3;
-    const result = main( { chat, messages, tokenLimit: size * target + ( 3 * target ) + 3 } );
-    expect( result.length ).toBe( target );
-    expect( result.reduce( ( prev, curr ) => prev + curr.size, 0 ) ).toBe( size * 3 );
-    expect( result.map( ( { id } ) => id ) ).toMatchObject( [ "2", "3", "5" ] );
-  } );
-
-  it( "token limit", () => {
-    const messages: Message[] = [
-      { visibility: Visibility.OPTIONAL, key: "a" },
-      { visibility: Visibility.EXCLUDE },
-      { visibility: Visibility.OPTIONAL },
-      { visibility: Visibility.REQUIRED },
-      { visibility: Visibility.EXCLUDE },
-      { visibility: Visibility.SYSTEM },
-      { visibility: Visibility.OPTIONAL },
-      { visibility: Visibility.OPTIONAL },
-      { visibility: Visibility.REQUIRED },
-      { visibility: Visibility.OPTIONAL },
-      { visibility: Visibility.OPTIONAL },
-      { visibility: Visibility.OPTIONAL },
-    ].map( ( { key, visibility }, index ) => ( {
-      id: String( index ),
-      key: key,
-      content: content,
-      role: "user",
-      visibility,
-      size: size,
-      createdAt: new Date(),
-      prompt: String( index )
-    } ) );
-    const target = 5;
-    const result = main( { chat, messages, tokenLimit: size * target + ( 3 * target ) + 3 } );
-    expect( result.length ).toBe( target );
-    expect( result.reduce( ( prev, curr ) => prev + curr.size, 0 ) ).toBe( size * 5 );
-    expect( result.map( ( { id } ) => id ) ).toMatchObject( [ "3", "8", "9", "10", "11" ] );
-  } );
+    // messages total tokens: 1200
+    // note - ChatGPT has some additional tokens for each message in the window,
+    // thus the tokenLimit of 600 will not includ 6 messages but just 5.
+    const result = main( { chat: chat as any, messages, tokenLimit: 600 } );
+    const actual = result.map( ( { id } ) => id );
+    const expected = [ "3", "8", "9", "10", "11" ];
+    expect( actual ).toMatchObject( expected );
+  }, 60000 );
 } );

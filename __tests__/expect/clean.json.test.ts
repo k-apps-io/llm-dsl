@@ -1,5 +1,5 @@
 import JSON from "json5";
-import { cleanJSON } from "../../src/Expect";
+import { cleanJSON } from "../../src/utilities";
 
 describe( "clean.json", () => {
   it( 'should clean fractions from a JSON string', async () => {

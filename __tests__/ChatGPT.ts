@@ -10,10 +10,10 @@ import {
   ChatCompletionUserMessageParam
 } from "openai/resources";
 import { encoding_for_model, Tiktoken, TiktokenModel } from "tiktoken";
+import { Agent, Initializer } from "../src/Agent";
 import {
   LLM
 } from "../src/definitions";
-import { DSL, Initializer } from "../src/DSL";
 
 export type Options = LLM.Model.Options & Omit<ChatCompletionCreateParams, "messages" | "stream" | "model"> & {
   model?: TiktokenModel | string;
@@ -137,7 +137,7 @@ const main = ( encoder: Tiktoken, content: string | OpenAI.Chat.Completions.Chat
   }
 };
 
-export class ChatGPT<Locals extends LLM.Locals = LLM.Locals, Metadata extends LLM.Metadata = LLM.Metadata> extends DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> {
+export class ChatGPT<Locals extends LLM.Locals = LLM.Locals, Metadata extends LLM.Metadata = LLM.Metadata> extends Agent<Options, Prompts, Responses, ToolResults, Locals, Metadata> {
 
   constructor( service: ChatGPTOptions, options: Omit<Initializer<Options, Prompts, Responses, ToolResults, Locals, Metadata>, "llm"> = {} ) {
     super( {

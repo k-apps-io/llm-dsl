@@ -1,5 +1,6 @@
 import { v4 as uuid } from "uuid";
-import { detectLoop } from "../../src/utilities";
+import { detectLoop, LoopError } from "../../src/utilities";
+import { ChatGPT } from "../ChatGPT";
 
 describe( "pipeline.looping", () => {
   it( "should find loop", async () => {
@@ -26,5 +27,18 @@ describe( "pipeline.looping", () => {
       const result = detectLoop( ids, 4 );
       expect( result.loop ).toBe( loop );
     }
+  } );
+
+  it( "should cause a loop error", async () => {
+    const chat = new ChatGPT( { model: "gpt-4o-mini" }, { settings: { maxCallStack: 3 } } );
+    const promise = chat
+      .append( () => {
+        return {
+          context: "generate a JSON Array of city names"
+        };
+      }, "1" )
+      .moveTo( { id: "1" } )
+      .execute();
+    expect( promise ).rejects.toThrow( LoopError );
   } );
 } );

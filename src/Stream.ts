@@ -1,5 +1,5 @@
 import { createWriteStream, writeFileSync, WriteStream } from "fs";
-import { DSL } from "./DSL";
+import { Agent } from "./Agent";
 import { LLM } from "./definitions";
 
 interface Options {
@@ -137,7 +137,7 @@ export const localFileStream = ( { directory, filename, append, timestamps }: Lo
 };
 
 interface WriteOptions extends FileSystemOptions {
-  chat: DSL<any, any, any, any, any, any>;
+  chat: Agent<any, any, any, any, any, any>;
   /**
    * Adds indentation, white space, and line break characters to the return-value JSON text to make it easier to read.
    * 

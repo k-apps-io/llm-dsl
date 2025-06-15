@@ -1,4 +1,4 @@
-import { DSL } from "./DSL";
+import { Agent } from "./Agent";
 
 export namespace LLM {
   export type Metadata = Record<string, unknown> & {
@@ -41,7 +41,7 @@ export namespace LLM {
   }
 
   export interface WindowOptions {
-    chat: DSL<LLM.Model.Options, LLM.Model.Prompts, LLM.Model.Responses, LLM.Model.ToolResults>;
+    chat: Agent<LLM.Model.Options, LLM.Model.Prompts, LLM.Model.Responses, LLM.Model.ToolResults>;
     messages: LLM.Chat<any>[ "messages" ];
     tokenLimit: number;
   }
@@ -123,7 +123,6 @@ export namespace LLM {
     }
 
   }
-
 
   /**
    * Interface representing a chat.
@@ -308,7 +307,7 @@ export namespace LLM {
       name: string;
       parameters: { [ key: string ]: any; };
       description: string;
-      func: Stage.Function<O, P, R, T, L, M, T, A & { locals: L; chat: DSL<O, P, R, T, L, M>; tool_call_id?: string; }>;
+      func: Stage.Function<O, P, R, T, L, M, T, A & { locals: L; chat: Agent<O, P, R, T, L, M>; tool_call_id?: string; }>;
     }
   }
 
@@ -316,7 +315,7 @@ export namespace LLM {
 
     export interface FunctionArgs<O extends Model.Options, P extends Model.Prompts, R extends Model.Responses, T extends Model.ToolResults, L extends Locals = Locals, M extends Metadata = Metadata> {
       locals: Locals;
-      chat: DSL<O, P, R, T, L, M>;
+      chat: Agent<O, P, R, T, L, M>;
     }
 
     export type Function<O extends Model.Options, P extends Model.Prompts, R extends Model.Responses, T extends Model.ToolResults, L extends Locals, M extends Metadata, Result, A extends Record<string, any> = {}> = ( args: FunctionArgs<O, P, R, T, L, M> & A ) => Result | Promise<Result>;
@@ -343,7 +342,7 @@ export namespace LLM {
     export type Prompt<O extends Model.Options, P extends Model.Prompts, R extends Model.Responses, T extends Model.ToolResults, L extends Locals = Locals, M extends Metadata = Metadata> = PromptArgs<O, P> | Function<O, P, R, T, L, M, PromptArgs<O, P>>;
 
     export interface Send<O extends Model.Options, P extends Model.Prompts, R extends Model.Responses, T extends Model.ToolResults, L extends Locals = Locals, M extends Metadata = Metadata> {
-      chat: DSL<O, P, R, T, L, M>;
+      chat: Agent<O, P, R, T, L, M>;
       functions?: true;
       windowSize?: number;
       responseSize?: number;
@@ -469,5 +468,37 @@ export namespace LLM {
     export type Chunk<O extends Model.Options, P extends Model.Prompts, R extends Model.Responses, T extends Model.ToolResults, M extends Metadata> = StateChunk | MetadataChunk<M> | ResponseStreamChunk | MessageChunk<O, P, R, T> | StageChunk;
     export type Handler<O extends Model.Options, P extends Model.Prompts, R extends Model.Responses, T extends Model.ToolResults, M extends Metadata> = ( chunk: Chunk<O, P, R, T, M> ) => void;
   }
+
+  export namespace Storage {
+
+    export abstract class Service {
+      abstract newId(): string;
+
+      abstract getById( id: string ): Promise<Chat>;
+
+      abstract save( chat: Chat ): Promise<void>;
+
+      abstract getArtifact( id: string ): Promise<Artifact | undefined>;
+
+      abstract getArtifacts( ids: string[] ): Promise<Artifact[]>;
+
+      abstract createArtifact( artifact: Omit<Artifact, "id"> ): Promise<Artifact>;
+
+      abstract createArtifacts( artifacts: Omit<Artifact, "id">[] ): Promise<Artifact[]>;
+
+      abstract updateArtifact( artifact: Artifact ): Promise<void>;
+
+      abstract updateArtifacts( artifacts: Artifact[] ): Promise<void>;
+
+      abstract deleteArtifact( id: string ): Promise<void>;
+
+      abstract deleteArtifacts( ids: string[] ): Promise<void>;
+    }
+  }
+
+  export type Artifact = {
+    id: string;
+    content: Buffer;
+  };
 
 }

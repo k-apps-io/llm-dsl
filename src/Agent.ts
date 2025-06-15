@@ -1,19 +1,19 @@
 import { readFileSync } from "fs";
 import { cloneDeep } from "lodash";
-import { ChatStorage, NoStorage } from "./Storage";
+import { NoStorage } from "./Storage";
 import { main } from "./Window";
 import { LLM } from "./definitions";
 import { LoopError, detectLoop, extractCodeBlocks, parseJSON } from "./utilities";
 
 const packageJson = JSON.parse( readFileSync( require.resolve( "../package.json" ), "utf8" ) ); // Read package.json
-const version = packageJson.version; // Extract the version
+const version = packageJson.version;
 
 export interface Initializer<Options extends LLM.Model.Options, Prompts extends LLM.Model.Prompts, Responses extends LLM.Model.Responses, ToolResults extends LLM.Model.ToolResults, Locals extends LLM.Locals, Metadata extends LLM.Metadata> {
   llm: LLM.Model.Service<Options, Prompts, Responses, ToolResults>;
   options?: Options;
   locals?: Locals;
   metadata?: Metadata;
-  storage?: ChatStorage;
+  storage?: LLM.Storage.Service;
   settings?: {
     windowSize?: number;
     minResponseSize?: number;
@@ -22,7 +22,7 @@ export interface Initializer<Options extends LLM.Model.Options, Prompts extends 
   window?: LLM.Window;
 }
 
-export class DSL<Options extends LLM.Model.Options
+export class Agent<Options extends LLM.Model.Options
   , Prompts extends LLM.Model.Prompts = LLM.Model.Prompts
   , Responses extends LLM.Model.Responses = LLM.Model.Responses
   , ToolResults extends LLM.Model.ToolResults = LLM.Model.ToolResults
@@ -33,7 +33,7 @@ export class DSL<Options extends LLM.Model.Options
   llm: LLM.Model.Service<Options, Prompts, Responses, ToolResults>;
   options: Options;
   window: LLM.Window;
-  storage: ChatStorage;
+  storage: LLM.Storage.Service;
   data: LLM.Chat<Options, Prompts, Responses, ToolResults, Metadata>;
   locals: Locals;
   rules: string[] = [];
@@ -47,7 +47,7 @@ export class DSL<Options extends LLM.Model.Options
   pipeline: Array<{
     id: string;
     stage: string;
-    promise: ( $this: DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> ) => Promise<void>;
+    promise: ( $this: Agent<Options, Prompts, Responses, ToolResults, Locals, Metadata> ) => Promise<void>;
   }> = [];
 
   exitCode?: 1 | Error = undefined;
@@ -68,7 +68,7 @@ export class DSL<Options extends LLM.Model.Options
     this.locals = locals ?? ( {} as Locals );
     this.settings = { ...LLM.DEFAULT_SETTINGS, ...settings };
     this.window = window || main;
-    this.storage = storage || NoStorage;
+    this.storage = storage || new NoStorage();
     this.data = {
       id: this.storage.newId(),
       messages: [],
@@ -84,7 +84,7 @@ export class DSL<Options extends LLM.Model.Options
    * will inherit the main chat's metadata in addition to `parent` which will
    * be the id of the main chat.
    * 
-   * @returns DSL
+   * @returns Agent
    */
   sidebar( { rules: _rules, functions: _functions, locals: _locals }: LLM.Stage.Sidebar = {} ) {
     // create a new chat and have a sidebar conversation
@@ -95,7 +95,7 @@ export class DSL<Options extends LLM.Model.Options
         parent: this.data.id!,
       },
     } as Metadata;
-    const sidebar = new DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata>( {
+    const sidebar = new Agent<Options, Prompts, Responses, ToolResults, Locals, Metadata>( {
       llm: this.llm,
       options: this.options,
       storage: this.storage,
@@ -119,7 +119,7 @@ export class DSL<Options extends LLM.Model.Options
    * @param id: a user id to associate with the chat and new prompts
    */
   setUser( id: string ) {
-    const promise = ( $this: DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> ) => new Promise<void>( ( resolve, reject ) => {
+    const promise = ( $this: Agent<Options, Prompts, Responses, ToolResults, Locals, Metadata> ) => new Promise<void>( ( resolve, reject ) => {
       $this.user = id;
       if ( $this.data.user === undefined ) $this.data.user = $this.user;
       resolve();
@@ -132,10 +132,10 @@ export class DSL<Options extends LLM.Model.Options
    * set locals for the chat
    * 
    * @param value: L
-   * @returns DSL
+   * @returns Agent
    */
   setLocals( args: LLM.Stage.SetLocals<Options, Prompts, Responses, ToolResults, Locals, Metadata>, id: string = this.storage.newId() ) {
-    const promise = ( $this: DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> ) => new Promise<void>( async ( resolve, reject ) => {
+    const promise = ( $this: Agent<Options, Prompts, Responses, ToolResults, Locals, Metadata> ) => new Promise<void>( async ( resolve, reject ) => {
       let locals: Locals;
       if ( typeof args === "function" ) {
         const result = args( { chat: $this, locals: $this.locals } );
@@ -158,7 +158,7 @@ export class DSL<Options extends LLM.Model.Options
    * set metadata for the chat
    */
   setMetadata( args: LLM.Stage.SetMetadata<Options, Prompts, Responses, ToolResults, Locals, Metadata>, id: string = this.storage.newId() ) {
-    const promise = ( $this: DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> ) => new Promise<void>( async ( resolve, reject ) => {
+    const promise = ( $this: Agent<Options, Prompts, Responses, ToolResults, Locals, Metadata> ) => new Promise<void>( async ( resolve, reject ) => {
       let metadata: Metadata;
       if ( typeof args === "function" ) {
         const result = args( { chat: $this, locals: $this.locals } );
@@ -188,8 +188,7 @@ export class DSL<Options extends LLM.Model.Options
    * add a message after the current pipeline position without generating a prompt.
    */
   push( args: LLM.Stage.Push<Options, Prompts, Responses, ToolResults, Locals, Metadata>, id: string = this.storage.newId() ) {
-    const promise = ( $this: DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> ) => new Promise<void>( async ( resolve, reject ) => {
-      const id = this.storage.newId();
+    const promise = ( $this: Agent<Options, Prompts, Responses, ToolResults, Locals, Metadata> ) => new Promise<void>( async ( resolve, reject ) => {
       let result: LLM.Stage.ContextArgs;
       if ( typeof args === "function" ) {
         const _args = args( { locals: $this.locals, chat: $this } );
@@ -218,7 +217,7 @@ export class DSL<Options extends LLM.Model.Options
       resolve();
     } );
 
-    const stage = { id: id, stage: "push", promise };
+    const stage = { id, stage: "push", promise };
     this._addStage( stage );
     return this;
   }
@@ -227,7 +226,7 @@ export class DSL<Options extends LLM.Model.Options
    * add a message to the end of the chat without generating a prompt.
    */
   append( args: LLM.Stage.Append<Options, Prompts, Responses, ToolResults, Locals, Metadata>, id: string = this.storage.newId() ) {
-    const promise = ( $this: DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> ) => new Promise<void>( async ( resolve, reject ) => {
+    const promise = ( $this: Agent<Options, Prompts, Responses, ToolResults, Locals, Metadata> ) => new Promise<void>( async ( resolve, reject ) => {
       let result: LLM.Stage.ContextArgs;
       if ( typeof args === "function" ) {
         const _args = args( { locals: $this.locals, chat: $this } );
@@ -265,8 +264,8 @@ export class DSL<Options extends LLM.Model.Options
    * @param options 
    * @returns {object} - the chat object   
    */
-  prompt( args: LLM.Stage.Prompt<Options, Prompts, Responses, ToolResults, Locals, Metadata>, id: string = this.storage.newId() ): DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> {
-    const promise = ( $this: DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> ) => {
+  prompt( args: LLM.Stage.Prompt<Options, Prompts, Responses, ToolResults, Locals, Metadata>, id: string = this.storage.newId() ): Agent<Options, Prompts, Responses, ToolResults, Locals, Metadata> {
+    const promise = ( $this: Agent<Options, Prompts, Responses, ToolResults, Locals, Metadata> ) => {
       return new Promise<void>( async ( resolve, reject ) => {
         let result: LLM.Stage.PromptArgs<Options, Prompts>;
         if ( typeof args === "function" ) {
@@ -311,9 +310,9 @@ export class DSL<Options extends LLM.Model.Options
    * @param func 
    * @returns {object} - the chat object   
    */
-  promptForEach( func: LLM.Stage.PromptForEach<Options, Prompts, Responses, ToolResults, Locals, Metadata>, id: string = this.storage.newId() ): DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> {
+  promptForEach( func: LLM.Stage.PromptForEach<Options, Prompts, Responses, ToolResults, Locals, Metadata>, id: string = this.storage.newId() ): Agent<Options, Prompts, Responses, ToolResults, Locals, Metadata> {
     console.warn( "Deprecation Warning: 'promptForEach' is deprecated and may be removed in future versions. Use `forEach` instead." );
-    const promise = ( $this: DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> ) => {
+    const promise = ( $this: Agent<Options, Prompts, Responses, ToolResults, Locals, Metadata> ) => {
       return new Promise<void>( async ( resolve, reject ) => {
         let prompts: LLM.Stage.PromptArgs<Options, Prompts>[] = [];
         const result = func( { locals: $this.locals, chat: $this } );
@@ -336,8 +335,8 @@ export class DSL<Options extends LLM.Model.Options
    * @param {string} id - a chat id 
    * @returns {object} - the chat object   
    */
-  load( id: string, stageId: string = this.storage.newId() ): DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> {
-    const promise = ( $this: DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> ) => new Promise<void>( async ( resolve, reject ) => {
+  load( id: string, stageId: string = this.storage.newId() ): Agent<Options, Prompts, Responses, ToolResults, Locals, Metadata> {
+    const promise = ( $this: Agent<Options, Prompts, Responses, ToolResults, Locals, Metadata> ) => new Promise<void>( async ( resolve, reject ) => {
       const result = $this.storage.getById( id );
       if ( result instanceof Promise ) {
         result
@@ -351,16 +350,16 @@ export class DSL<Options extends LLM.Model.Options
             const messages: LLM.Message.Message<Options, Prompts, Responses, ToolResults>[] = [
               ...$this.data.messages.filter( m => m.visibility === LLM.Visibility.REQUIRED || m.key !== undefined ),
               ...data.messages,
-            ].reduce( ( prev, curr ) => {
+            ].reduce<LLM.Message.Message<Options, Prompts, Responses, ToolResults>[]>( ( prev, curr ) => {
               const index = prev.findIndex( ( m ) => m.id === curr.id || ( m.key && curr.key && m.key === curr.key ) );
               if ( index === -1 ) {
-                prev.push( curr );
+                prev.push( curr as LLM.Message.Message<Options, Prompts, Responses, ToolResults> );
               } else {
-                prev[ index ] = curr;
+                prev[ index ] = curr as LLM.Message.Message<Options, Prompts, Responses, ToolResults>;
               }
               return prev;
-            }, [] as LLM.Message.Message<Options, Prompts, Responses, ToolResults>[] );
-            $this.data = data;
+            }, [] );
+            $this.data = data as LLM.Chat<Options, Prompts, Responses, ToolResults, Metadata>;
             $this.data.messages = messages;
             resolve();
           } )
@@ -380,7 +379,7 @@ export class DSL<Options extends LLM.Model.Options
    * @returns {Promise}
    */
   save(): Promise<void> {
-    return this.storage.save( this as DSL<any, any, any, any> );
+    return this.storage.save( this.data );
   }
 
   /**
@@ -388,7 +387,7 @@ export class DSL<Options extends LLM.Model.Options
    * 
    * @returns a clone of the chat object
    */
-  clone( { startAt }: { startAt: "beginning" | "end" | number; } = { startAt: "beginning" } ): DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> {
+  clone( { startAt }: { startAt: "beginning" | "end" | number; } = { startAt: "beginning" } ): Agent<Options, Prompts, Responses, ToolResults, Locals, Metadata> {
     const $this = cloneDeep( this );
     $this.data.id = this.storage.newId();
     $this.data.messages = $this.data.messages.map( m => {
@@ -415,8 +414,8 @@ export class DSL<Options extends LLM.Model.Options
    * @param options 
    * @returns {object} - the chat object
    */
-  rule( options: LLM.Stage.Rule<Options, Prompts, Responses, ToolResults, Locals, Metadata>, id: string = this.storage.newId() ): DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> {
-    const promise = async ( $this: DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> ) => {
+  rule( options: LLM.Stage.Rule<Options, Prompts, Responses, ToolResults, Locals, Metadata>, id: string = this.storage.newId() ): Agent<Options, Prompts, Responses, ToolResults, Locals, Metadata> {
+    const promise = async ( $this: Agent<Options, Prompts, Responses, ToolResults, Locals, Metadata> ) => {
       let rule: LLM.Stage.RuleArgs;
       if ( typeof options === "function" ) {
         const result = options( { locals: $this.locals, chat: $this } );
@@ -459,8 +458,8 @@ export class DSL<Options extends LLM.Model.Options
    * @param options 
    * @returns {object} - the chat object
    */
-  instruction( options: LLM.Stage.Instruction ): DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> {
-    const promise = ( $this: DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> ) => {
+  instruction( options: LLM.Stage.Instruction ): Agent<Options, Prompts, Responses, ToolResults, Locals, Metadata> {
+    const promise = ( $this: Agent<Options, Prompts, Responses, ToolResults, Locals, Metadata> ) => {
       return new Promise<void>( ( resolve, reject ) => {
         let instruction: string | undefined = undefined;
         if ( typeof options === "string" ) {
@@ -498,22 +497,22 @@ export class DSL<Options extends LLM.Model.Options
    * @param options 
    * @returns {object} - the chat object
    */
-  function<F>( options: LLM.Tool.Tool<Options, Prompts, Responses, ToolResults, Locals, Metadata, F> ): DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> {
+  function<F>( options: LLM.Tool.Tool<Options, Prompts, Responses, ToolResults, Locals, Metadata, F> ): Agent<Options, Prompts, Responses, ToolResults, Locals, Metadata> {
     console.warn( "Deprecation Warning: 'function' is deprecated and may be removed in future versions. Use `tool` instead." );
     return this.tool( options );
   }
 
-  tool<F>( options: LLM.Tool.Tool<Options, Prompts, Responses, ToolResults, Locals, Metadata, F> ): DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> {
+  tool<F>( options: LLM.Tool.Tool<Options, Prompts, Responses, ToolResults, Locals, Metadata, F> ): Agent<Options, Prompts, Responses, ToolResults, Locals, Metadata> {
     const { name } = options;
     this.functions[ name ] = { ...options, calls: 0 };
     return this;
   }
 
   /**
-   * manually call a function within the DSL
+   * manually call a function within the Agent
    */
-  call<F>( { name, args, generateResponse }: LLM.Stage.Call<F>, id: string = this.storage.newId() ): DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> {
-    const promise = ( $this: DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> ) => {
+  call<F>( { name, args, generateResponse }: LLM.Stage.Call<F>, id: string = this.storage.newId() ): Agent<Options, Prompts, Responses, ToolResults, Locals, Metadata> {
+    const promise = ( $this: Agent<Options, Prompts, Responses, ToolResults, Locals, Metadata> ) => {
       return new Promise<void>( async ( resolve, reject ) => {
         if ( !$this.functions[ name ] ) {
           return reject( `function not found: ${ name }` );
@@ -554,8 +553,8 @@ export class DSL<Options extends LLM.Model.Options
   /**
    * directly access the LLM response the latest prompt.
    */
-  response( func: LLM.Stage.Response<Options, Prompts, Responses, ToolResults, Locals, Metadata>, id: string = this.storage.newId() ): DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> {
-    const promise = async ( $this: DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> ) => {
+  response( func: LLM.Stage.Response<Options, Prompts, Responses, ToolResults, Locals, Metadata>, id: string = this.storage.newId() ): Agent<Options, Prompts, Responses, ToolResults, Locals, Metadata> {
+    const promise = async ( $this: Agent<Options, Prompts, Responses, ToolResults, Locals, Metadata> ) => {
       const response = $this.data.messages[ $this.data.messages.length - 1 ];
       const result = func( { response, locals: $this.locals, chat: $this } );
       if ( result instanceof Promise ) {
@@ -571,20 +570,20 @@ export class DSL<Options extends LLM.Model.Options
   // 1 argument
   expect<A extends Record<string, any>>(
     a: LLM.Stage.Expect<Options, Prompts, Responses, ToolResults, Locals, Metadata, A>
-  ): DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata>;
+  ): Agent<Options, Prompts, Responses, ToolResults, Locals, Metadata>;
 
   // 2 arguments
   expect<A extends Record<string, any>, B extends Record<string, any>>(
     a: LLM.Stage.Expect<Options, Prompts, Responses, ToolResults, Locals, Metadata, A>,
     b: LLM.Stage.Expect<Options, Prompts, Responses, ToolResults, Locals, Metadata, B, A>
-  ): DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata>;
+  ): Agent<Options, Prompts, Responses, ToolResults, Locals, Metadata>;
 
   // 3 arguments
   expect<A extends Record<string, any>, B extends Record<string, any>, C extends Record<string, any>,>(
     a: LLM.Stage.Expect<Options, Prompts, Responses, ToolResults, Locals, Metadata, A>,
     b: LLM.Stage.Expect<Options, Prompts, Responses, ToolResults, Locals, Metadata, B, A>,
     c: LLM.Stage.Expect<Options, Prompts, Responses, ToolResults, Locals, Metadata, C, B>,
-  ): DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata>;
+  ): Agent<Options, Prompts, Responses, ToolResults, Locals, Metadata>;
 
   /**
    * Establish expectations for the response from the LLM.
@@ -598,57 +597,65 @@ export class DSL<Options extends LLM.Model.Options
     ...handlers: LLM.Stage.Expect<Options, Prompts, Responses, ToolResults, Locals, Metadata>[]
   ) {
     const stageId = this.storage.newId();
-    const promise = ( $this: DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> ) => {
-      return new Promise<void>( async ( resolve, _reject ) => {
-        const response = $this.data.messages.findLast( m => m.type === "response" ) as LLM.Message.TextResponse | undefined;
-        if ( !response ) {
-          process.emitWarning( "No response found in the chat history. Expectation cannot be set." );
-          return resolve();
-        }
-        let expect: Record<string, any> | LLM.Stage.ExpectErrorResult | void = {};
-        for ( const handler of handlers ) {
-          const result = handler( { response, locals: $this.locals, chat: $this, ...expect } );
-          let expectation: Record<string, any> | LLM.Stage.ExpectErrorResult | void;
-          if ( result instanceof Promise ) {
-            expectation = await result;
-          } else {
-            expectation = result;
-          }
-          if ( !expectation ) {
+    const promise = ( $this: Agent<Options, Prompts, Responses, ToolResults, Locals, Metadata> ) => {
+      return new Promise<void>( async ( resolve, reject ) => {
+        let isDone: boolean = false;
+        let attempts = $this.settings.maxCallStack;
+        while ( !isDone && attempts > 0 ) {
+          attempts--;
+          const response = $this.data.messages.findLast( m => m.type === "response" ) as LLM.Message.TextResponse | undefined;
+          if ( !response ) {
+            process.emitWarning( "No response found in the chat history. Expectation cannot be set." );
             return resolve();
-          } else if ( expectation.type !== "error" ) {
-            // expectation is a valid expectation
-            expect = expectation;
+          }
+          // evaluate the handlers 
+          let expect: Record<string, any> | LLM.Stage.ExpectErrorResult | void = {};
+          let errorResult: undefined | LLM.Stage.ExpectErrorResult;
+          for ( const handler of handlers ) {
+            const result = handler( { response, locals: $this.locals, chat: $this, ...expect } );
+            let expectation: Record<string, any> | LLM.Stage.ExpectErrorResult | void;
+            if ( result instanceof Promise ) {
+              expectation = await result;
+            } else {
+              expectation = result;
+            }
+            if ( !expectation ) {
+              continue; // no expectation set, continue to the next handler
+            } else if ( expectation.type !== "error" ) {
+              // expectation is a valid result
+              expect = expectation;
+              continue;
+            }
+            // expectation is a error result
+            errorResult = expectation as LLM.Stage.ExpectErrorResult;
+            break;
+          }
+          if ( !errorResult ) {
+            // no error found, we are done
+            isDone = true;
             continue;
           }
-          // expectation is a error result
-          const stage = {
-            id: stageId,
-            stage: "expect:disput",
-            promise: ( $this: DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> ) => new Promise<void>( ( resolve, reject ) => {
-              // there was a problem;
-              const { error } = expectation as LLM.Stage.ExpectErrorResult;
-              const message: LLM.Message.Error = {
-                id: $this.storage.newId(),
-                type: "error",
-                error: error || "Expectation failed",
-                visibility: LLM.Visibility.SYSTEM,
-                createdAt: new Date(),
-                tokens: {
-                  message: 0
-                }
-              };
-              message.tokens.message = $this.llm.tokens( message );
-              $this.data.messages.push( message );
-              $this.out( { id: message.id, message, type: "message", chat: $this.data.id! } );
-              $this._send( { chat: $this, functions: true, caller: message.id } )
-                .then( () => resolve() )
-                .catch( reject );
-            } )
+          const { error } = errorResult;
+          const message: LLM.Message.Error = {
+            id: $this.storage.newId(),
+            type: "error",
+            error: error || "Expectation failed",
+            visibility: LLM.Visibility.SYSTEM,
+            createdAt: new Date(),
+            tokens: {
+              message: 0
+            }
           };
-          $this._addStage( stage );
-          resolve();
+          message.tokens.message = $this.llm.tokens( message );
+          $this.data.messages.push( message );
+          $this.out( { id: message.id, message, type: "message", chat: $this.data.id! } );
+          await $this._send( { chat: $this, functions: true, caller: message.id } );
         }
+        if ( attempts === 0 ) {
+          // we reached the maximum call stack, throw a loop error
+          return reject( new Error( `Maximum call stack exceeded while evaluating expectations. Please check your expectations for loops or excessive complexity.` ) );
+        }
+        resolve();
       } );
     };
     this._addStage( { id: stageId, stage: "expect", promise } );
@@ -658,12 +665,12 @@ export class DSL<Options extends LLM.Model.Options
   /**
    * handlers to receive the chat stream and execute the pipeline
    */
-  stream( handler: LLM.Stream.Handler<Options, Prompts, Responses, ToolResults, Metadata>, ...others: LLM.Stream.Handler<Options, Prompts, Responses, ToolResults, Metadata>[] ): DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> {
+  stream( handler: LLM.Stream.Handler<Options, Prompts, Responses, ToolResults, Metadata>, ...others: LLM.Stream.Handler<Options, Prompts, Responses, ToolResults, Metadata>[] ): Agent<Options, Prompts, Responses, ToolResults, Locals, Metadata> {
     console.warn( "Deprecation Warning: 'stream' is deprecated and may be removed in future versions. Use `pipe` instead." );
     return this.pipe( handler, ...others );
   }
 
-  pipe( handler: LLM.Stream.Handler<Options, Prompts, Responses, ToolResults, Metadata>, ...others: LLM.Stream.Handler<Options, Prompts, Responses, ToolResults, Metadata>[] ): DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> {
+  pipe( handler: LLM.Stream.Handler<Options, Prompts, Responses, ToolResults, Metadata>, ...others: LLM.Stream.Handler<Options, Prompts, Responses, ToolResults, Metadata>[] ): Agent<Options, Prompts, Responses, ToolResults, Locals, Metadata> {
     this.streamHandlers = [ ...this.streamHandlers, handler, ...others ];
     return this;
   }
@@ -680,8 +687,8 @@ export class DSL<Options extends LLM.Model.Options
   /**
    * 
    */
-  pause( func: LLM.Stage.Pause<Options, Prompts, Responses, ToolResults, Locals, Metadata>, id: string = this.storage.newId() ): DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> {
-    const promise = ( $this: DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> ) => {
+  pause( func: LLM.Stage.Pause<Options, Prompts, Responses, ToolResults, Locals, Metadata>, id: string = this.storage.newId() ): Agent<Options, Prompts, Responses, ToolResults, Locals, Metadata> {
+    const promise = ( $this: Agent<Options, Prompts, Responses, ToolResults, Locals, Metadata> ) => {
       return new Promise<void>( async ( resolve, reject ) => {
         const result = func( { locals: $this.locals, chat: $this } );
         if ( result instanceof Promise ) {
@@ -698,8 +705,8 @@ export class DSL<Options extends LLM.Model.Options
    * sets the position of the pipeline to the stage with the provided id. If a id matches a stage, that stage will be executed
    * next and continue from that position. If a stage is not found a error is thrown.
    */
-  moveTo( args: LLM.Stage.MoveTo<Options, Prompts, Responses, ToolResults, Locals, Metadata> ): DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> {
-    const promise = ( $this: DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> ) => {
+  moveTo( args: LLM.Stage.MoveTo<Options, Prompts, Responses, ToolResults, Locals, Metadata> ): Agent<Options, Prompts, Responses, ToolResults, Locals, Metadata> {
+    const promise = ( $this: Agent<Options, Prompts, Responses, ToolResults, Locals, Metadata> ) => {
       return new Promise<void>( async ( resolve, reject ) => {
         let targetId: string;
         if ( typeof args === "function" ) {
@@ -728,8 +735,8 @@ export class DSL<Options extends LLM.Model.Options
     return this;
   }
 
-  forEach<T>( iterable: T[], func: LLM.Stage.ForEach<Options, Prompts, Responses, ToolResults, Locals, Metadata>, id: string = this.storage.newId() ): DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> {
-    const promise = ( $this: DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> ) => new Promise<void>( ( resolve, reject ) => {
+  forEach<T>( iterable: T[], func: LLM.Stage.ForEach<Options, Prompts, Responses, ToolResults, Locals, Metadata>, id: string = this.storage.newId() ): Agent<Options, Prompts, Responses, ToolResults, Locals, Metadata> {
+    const promise = ( $this: Agent<Options, Prompts, Responses, ToolResults, Locals, Metadata> ) => new Promise<void>( ( resolve, reject ) => {
       try {
         // const originalPosition = $this.pipelineCursor;
         // let currentPosition = originalPosition;
@@ -757,7 +764,7 @@ export class DSL<Options extends LLM.Model.Options
   private _addStage( stage: {
     id: string;
     stage: string;
-    promise: ( $this: DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> ) => Promise<void>;
+    promise: ( $this: Agent<Options, Prompts, Responses, ToolResults, Locals, Metadata> ) => Promise<void>;
   } ) {
     if ( this.pipelineCursor === -1 ) {
       this.pipeline.push( stage );
@@ -957,7 +964,7 @@ export class DSL<Options extends LLM.Model.Options
       // function results were added to the chat
       // we will resend the chat to have the LLM respond to 
       // the function results
-      const stage = { id: this.storage.newId(), stage: "tool:result", promise: ( $chat: DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata> ) => chat._send( { chat: $chat, functions, windowSize, caller } ) };
+      const stage = { id: this.storage.newId(), stage: "tool:result", promise: ( $chat: Agent<Options, Prompts, Responses, ToolResults, Locals, Metadata> ) => chat._send( { chat: $chat, functions, windowSize, caller } ) };
       const currentStageIndex = chat.pipelineCursor + 1;
       if ( currentStageIndex >= chat.pipeline.length ) {
         // end of the chat, just need to push the new stage
@@ -978,11 +985,12 @@ export class DSL<Options extends LLM.Model.Options
    * 
    * @returns {Promise}
    */
-  async execute( { locals, metadata }: { locals?: Locals; metadata?: Omit<Metadata, "$">; } = {} ): Promise<DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata>> {
-    return new Promise<DSL<Options, Prompts, Responses, ToolResults, Locals, Metadata>>( async ( resolve, reject ) => {
+  async execute( { locals, metadata }: { locals?: Locals; metadata?: Omit<Metadata, "$">; } = {} ): Promise<Agent<Options, Prompts, Responses, ToolResults, Locals, Metadata>> {
+    return new Promise<Agent<Options, Prompts, Responses, ToolResults, Locals, Metadata>>( async ( resolve, reject ) => {
       this.locals = { ...this.locals, ...locals };
       this.data.metadata = { ...this.data.metadata, ...metadata };
       let error: any = undefined;
+      let stageIds: string[] = [];
       try {
         let hasNext = true;
         this.out( { id: this.data.id!, type: this.type, state: "open", chat: this.data.id! } );
@@ -996,14 +1004,15 @@ export class DSL<Options extends LLM.Model.Options
           }
 
           // evaluate the call stack for a loop
-          const slice = this.pipeline.slice( 0, this.pipelineCursor );
-          const result = detectLoop( slice.map( ( { id } ) => id ), this.settings.maxCallStack );
+          const result = detectLoop( stageIds, this.settings.maxCallStack );
+          const a = false;
           if ( result.loop ) throw new LoopError( result );
 
           // perform the stage
           const item = this.pipeline[ this.pipelineCursor + 1 ];
           if ( item === undefined ) break;
           const { promise, stage, id } = item;
+          stageIds.push( id );
           this.out( { id: id, type: "stage", stage, chat: this.data.id!, state: "begin" } );
           await promise( this );
           this.out( { id: id, type: "stage", stage, chat: this.data.id!, state: "end" } );

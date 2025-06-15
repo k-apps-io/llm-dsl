@@ -14,7 +14,13 @@ npm install @k-apps-io/llm-dsl @k-apps-io/llm-dsl-chatgpt
 
 ````typescript
 import { ChatGPT, Options } from "@k-apps-io/llm-dsl-chatgpt";
-import { CODE_BLOCK_RULE, DSL, Locals, json, stdout } from "@k-apps-io/llm-dsl";
+import {
+  CODE_BLOCK_RULE,
+  Agent,
+  Locals,
+  json,
+  stdout,
+} from "@k-apps-io/llm-dsl";
 
 require("dotenv").config();
 
@@ -22,7 +28,7 @@ type ChatLocals = Locals & {
   languages: string[];
 };
 
-const chat = new DSL<Options, ChatLocals, undefined>({
+const agent = new Agent<Options, ChatLocals, undefined>({
   llm: new ChatGPT({ model: "gpt-4o-mini" }),
 });
 
@@ -77,11 +83,11 @@ a `rule` represents a specific instruction for the LLM and `you` to follow. Thes
 
 ```typescript
 import { ChatGPT, Options } from "@k-apps-io/llm-dsl-chatgpt";
-import { DSL, Locals, stdout } from "@k-apps-io/llm-dsl";
+import { Agent, Locals, stdout } from "@k-apps-io/llm-dsl";
 
 require("dotenv").config();
 
-const chat = new DSL<Options, Locals, undefined>({
+const agent = new Agent<Options, Locals, undefined>({
   llm: new ChatGPT({ model: "gpt-4o-mini" }),
 });
 
@@ -101,11 +107,16 @@ chat
 
 # Functions
 
-In your DSL, you can define custom `functions` that the LLM may call, and the results will be returned as new `Message` object. This feature allows you to create custom logic and interactions within your conversation with the LLM.
+In your Agent, you can define custom `functions` that the LLM may call, and the results will be returned as new `Message` object. This feature allows you to create custom logic and interactions within your conversation with the LLM.
 
 ```typescript
 import { ChatGPT, Options } from "@k-apps-io/llm-dsl-chatgpt";
-import { DSL, localFileStorage, toCodeBlock, stdout } from "@k-apps-io/llm-dsl";
+import {
+  Agent,
+  localFileStorage,
+  toCodeBlock,
+  stdout,
+} from "@k-apps-io/llm-dsl";
 
 require("dotenv").config();
 
@@ -114,7 +125,7 @@ interface WeatherReport {
   unit: "Fahrenheit" | "Celsius";
   percipitation: string;
 }
-const chat = new DSL<Options, {}, undefined>({
+const agent = new Agent<Options, {}, undefined>({
   llm: new ChatGPT({ model: "gpt-4o-mini" }),
 });
 
@@ -169,14 +180,14 @@ a `prompt` is the main form of interacting with the LLM, use this command to sen
 
 ```typescript
 import { ChatGPT, Options } from "@k-apps-io/llm-dsl-chatgpt";
-import { DSL, Locals, stdout } from "@k-apps-io/llm-dsl";
+import { Agent, Locals, stdout } from "@k-apps-io/llm-dsl";
 
 require("dotenv").config();
 
 type ChatLocals = Locals & {
   hint: string;
 };
-const chat = new DSL<Options, ChatLocals, undefined>({
+const agent = new Agent<Options, ChatLocals, undefined>({
   llm: new ChatGPT({ model: "gpt-4o-mini" }),
 });
 
@@ -205,7 +216,7 @@ chat
 
 ```typescript
 import { ChatGPT, Options } from "@k-apps-io/llm-dsl-chatgpt";
-import { DSL, Locals, toCodeBlock, stdout } from "@k-apps-io/llm-dsl";
+import { Agent, Locals, toCodeBlock, stdout } from "@k-apps-io/llm-dsl";
 
 require("dotenv").config();
 
@@ -213,7 +224,7 @@ type ChatLocals = Locals & {
   isChill: boolean;
   tasks: string[];
 };
-const chat = new DSL<Options, ChatLocals, undefined>({
+const agent = new Agent<Options, ChatLocals, undefined>({
   llm: new ChatGPT({ model: "gpt-4o-mini" }),
 });
 
@@ -268,7 +279,7 @@ This stage plays a pivotal role in ensuring that the Language Model's responses 
 
 ````typescript
 import { ChatGPT, Options } from "@k-apps-io/llm-dsl-chatgpt";
-import { DSL, Locals, json, stdout } from "@k-apps-io/llm-dsl";
+import { Agent, Locals, json, stdout } from "@k-apps-io/llm-dsl";
 
 require("dotenv").config();
 
@@ -278,7 +289,7 @@ interface Clubs extends Locals {
     yardage: number;
   }[];
 }
-const chat = new DSL<Options, Clubs, undefined>({
+const agent = new Agent<Options, Clubs, undefined>({
   llm: new ChatGPT({ model: "gpt-4o-mini" }),
 });
 chat
@@ -318,7 +329,7 @@ The `promptForEach` stage allows you to use an iterable e.g. a value in the chat
 
 ````typescript
 import { ChatGPT, Options } from "@k-apps-io/llm-dsl-chatgpt";
-import { DSL, Locals, json, stdout } from "@k-apps-io/llm-dsl";
+import { Agent, Locals, json, stdout } from "@k-apps-io/llm-dsl";
 
 require("dotenv").config();
 
@@ -328,7 +339,7 @@ interface Clubs extends Locals {
     yardage: number;
   }[];
 }
-const chat = new DSL<Options, Clubs, undefined>({
+const agent = new Agent<Options, Clubs, undefined>({
   llm: new ChatGPT({ model: "gpt-4o-mini" }),
 });
 chat
@@ -374,14 +385,20 @@ chat
 ````typescript
 import { ChatGPT, Options } from "@k-apps-io/llm-dsl-chatgpt";
 import { writeFileSync } from "fs";
-import { CODE_BLOCK_RULE, DSL, Locals, json, stdout } from "@k-apps-io/llm-dsl";
+import {
+  CODE_BLOCK_RULE,
+  Agent,
+  Locals,
+  json,
+  stdout,
+} from "@k-apps-io/llm-dsl";
 
 require("dotenv").config();
 
 interface Cities extends Locals {
   cities: string[];
 }
-const chat = new DSL<Options, Cities, undefined>({
+const agent = new Agent<Options, Cities, undefined>({
   llm: new ChatGPT({ model: "gpt-4o-mini" }),
 });
 chat
@@ -447,11 +464,11 @@ When the same `key` is set on multiple prompts only the latest in the `window` w
 
 ```typescript
 import { ChatGPT, Options } from "@k-apps-io/llm-dsl-chatgpt";
-import { DSL, Locals, stdout } from "@k-apps-io/llm-dsl";
+import { Agent, Locals, stdout } from "@k-apps-io/llm-dsl";
 
 require("dotenv").config();
 
-const chat = new DSL<Options, Locals, undefined>({
+const agent = new Agent<Options, Locals, undefined>({
   llm: new ChatGPT({ model: "gpt-4o-mini" }),
 });
 
@@ -477,11 +494,11 @@ Using the `windowSize` setting, you can control the max amount of tokens allowed
 
 ```typescript
 import { ChatGPT, Options } from "@k-apps-io/llm-dsl-chatgpt";
-import { DSL, Locals } from "@k-apps-io/llm-dsl";
+import { Agent, Locals } from "@k-apps-io/llm-dsl";
 
 require("dotenv").config();
 
-const chat = new DSL<Options, Locals, undefined>({
+const agent = new Agent<Options, Locals, undefined>({
   llm: new ChatGPT({ model: "gpt-4o-mini" }),
   settings: {
     // this will be the max size of the window for each prompt
@@ -495,11 +512,11 @@ Finallly, set the `visibility` on prompts to control whether a message should al
 
 ```typescript
 import { ChatGPT, Options } from "@k-apps-io/llm-dsl-chatgpt";
-import { DSL, Locals, Visibility, stdout } from "@k-apps-io/llm-dsl";
+import { Agent, Locals, Visibility, stdout } from "@k-apps-io/llm-dsl";
 
 require("dotenv").config();
 
-const chat = new DSL<Options, Locals, undefined>({
+const agent = new Agent<Options, Locals, undefined>({
   llm: new ChatGPT({ model: "gpt-4o-mini" }),
 });
 
@@ -529,11 +546,11 @@ chat
 
 ```typescript
 import { ChatGPT, Options } from "@k-apps-io/llm-dsl-chatgpt";
-import { DSL, Locals, latest, stdout } from "@k-apps-io/llm-dsl";
+import { Agent, Locals, latest, stdout } from "@k-apps-io/llm-dsl";
 
 require("dotenv").config();
 
-const chat = new DSL<Options, Locals, undefined>({
+const agent = new Agent<Options, Locals, undefined>({
   llm: new ChatGPT({ model: "gpt-4o-mini" }),
   window: latest({ n: 2 }),
 });
@@ -552,11 +569,11 @@ chat
 
 ## custom
 
-Of course, there may be a need for you to have more control over your `window`. This can be done by creating a function that implements `Window` and assign it to your `DSL` instance.
+Of course, there may be a need for you to have more control over your `window`. This can be done by creating a function that implements `Window` and assign it to your `Agent` instance.
 
 ```typescript
 import { ChatGPT, Options } from "@k-apps-io/llm-dsl-chatgpt";
-import { Chat, DSL, Locals, Metadata, Window } from "@k-apps-io/llm-dsl";
+import { Chat, Agent, Locals, Metadata, Window } from "@k-apps-io/llm-dsl";
 
 require("dotenv").config();
 
@@ -573,7 +590,7 @@ const myWindow: Window = ({ messages, tokenLimit, key }) => {
   }, [] as Chat<MyMetadata>["messages"]);
 };
 
-const chat = new DSL<Options, Locals, MyMetadata>({
+const agent = new Agent<Options, Locals, MyMetadata>({
   llm: new ChatGPT({ model: "gpt-4o-mini" }),
   window: myWindow,
 });
@@ -591,11 +608,11 @@ this is a simple mechanism that will store and load chats from the local file sy
 
 ```typescript
 import { ChatGPT, Options } from "@k-apps-io/llm-dsl-chatgpt";
-import { Chat, DSL, Locals, LocalStorage } from "@k-apps-io/llm-dsl";
+import { Chat, Agent, Locals, LocalStorage } from "@k-apps-io/llm-dsl";
 
 require("dotenv").config();
 
-const chat = new DSL<Options, Locals, undefined>({
+const agent = new Agent<Options, Locals, undefined>({
   llm: new ChatGPT({ model: "gpt-4o-mini" }),
   storage: LocalStorage({ directory: process.env.CHATS_DIR }),
 });
@@ -627,7 +644,7 @@ const MyAPI: ChatStorage = {
   }
 }
 
-const chat = new DSL({
+const agent = new Agent({
   storage: MyAPI,
   // ...
 });
@@ -643,11 +660,11 @@ If for some reason you need the pipeline to stop executing call `chat.exit()`. T
 
 ```typescript
 import { ChatGPT, Options } from "@k-apps-io/llm-dsl-chatgpt";
-import { DSL, Locals, stdout } from "@k-apps-io/llm-dsl";
+import { Agent, Locals, stdout } from "@k-apps-io/llm-dsl";
 
 require("dotenv").config();
 
-const chat = new DSL<Options, Locals, undefined>({
+const agent = new Agent<Options, Locals, undefined>({
   llm: new ChatGPT({ model: "gpt-4o-mini" }),
 });
 chat
@@ -694,11 +711,11 @@ chat
 
 ```typescript
 import { ChatGPT, Options } from "@k-apps-io/llm-dsl-chatgpt";
-import { DSL, Locals, stdout } from "@k-apps-io/llm-dsl";
+import { Agent, Locals, stdout } from "@k-apps-io/llm-dsl";
 
 require("dotenv").config();
 
-const chat = new DSL<Options, Locals, undefined>({
+const agent = new Agent<Options, Locals, undefined>({
   llm: new ChatGPT({ model: "gpt-4o-mini" }),
 });
 chat

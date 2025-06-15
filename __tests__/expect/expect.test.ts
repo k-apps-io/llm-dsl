@@ -2,7 +2,6 @@ import { LLM } from "../../src/definitions";
 import { json, JSON } from "../../src/Expect";
 import { CODE_BLOCK_RULE } from "../../src/Rules";
 import { localFileStorage, localFileStream } from "../../src/Stream";
-import { LoopError } from "../../src/utilities";
 import { ChatGPT } from "../ChatGPT";
 
 
@@ -23,7 +22,7 @@ describe( ".expect", () => {
       } )
       .expect(
         json( { blocks: 1, errorPrompt: "generate a JSON Array of 2 different city names" } ),
-        ( { chat, json } ) => new Promise<LLM.Stage.ExpectErrorResult | void>( ( resolve, reject ) => {
+        ( { chat, json } ) => new Promise<LLM.Stage.ExpectErrorResult | void>( ( resolve ) => {
           if ( chat.locals.attempts <= 1 ) {
             chat.locals.attempts += 1;
             resolve( {
@@ -40,7 +39,6 @@ describe( ".expect", () => {
       .execute();
     localFileStorage( { directory: __dirname, chat, filename: 'expectJSON' } );
     expect( chat.locals.json ).toBeDefined();
-    expect( true ).toBe( true );
   }, 100000 );
 
   it( 'expectCallstackExceeded', async () => {
@@ -61,6 +59,6 @@ describe( ".expect", () => {
       } ) )
       .pipe( localFileStream( { directory: __dirname, filename: 'expectCallstackExceeded', append: false } ) )
       .execute();
-    await expect( $chat ).rejects.toThrow( LoopError );
+    await expect( $chat ).rejects.toThrow();
   }, 200000 );
 } );

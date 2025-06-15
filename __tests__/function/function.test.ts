@@ -10,7 +10,7 @@ interface ChatLocals extends LLM.Locals {
 const chat = new ChatGPT<ChatLocals>( {
   model: "gpt-4o-mini",
 }, {
-  storage: LocalStorage( { directory: __dirname } ),
+  storage: new LocalStorage( { directory: __dirname } ),
   locals: {
     wasCalled: false
   }
@@ -81,7 +81,7 @@ describe( ".function", () => {
           "type": "object",
           "properties": {}
         },
-        description: "a function available on the DSL",
+        description: "a function available on the Agent",
         func: ( { locals, tool_call_id } ) => {
           return new Promise( ( resolve, reject ) => {
             locals.wasCalled = true;

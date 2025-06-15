@@ -1,4 +1,4 @@
-export { Agent } from "./Agent";
+export { Agent, Initializer } from "./Agent";
 export { toCodeBlock } from "./CodeBlocks";
 export { LLM } from "./definitions";
 export { json } from "./Expect";

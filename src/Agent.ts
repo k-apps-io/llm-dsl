@@ -508,6 +508,12 @@ export class Agent<Options extends LLM.Model.Options
     return this;
   }
 
+  toolSuite( { name, tools }: LLM.Tool.Suite<Options, Prompts, Responses, ToolResults, Locals, Metadata> ): Agent<Options, Prompts, Responses, ToolResults, Locals, Metadata> {
+    // add all tools to the chat
+    tools.forEach( tool => this.tool( { ...tool, name: `${ name }:${ tool.name }` } ) );
+    return this;
+  }
+
   /**
    * manually call a function within the Agent
    */

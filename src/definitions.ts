@@ -309,6 +309,11 @@ export namespace LLM {
       description: string;
       func: Stage.Function<O, P, R, T, L, M, T, A & { locals: L; chat: Agent<O, P, R, T, L, M>; tool_call_id?: string; }>;
     }
+
+    export interface Suite<O extends Model.Options, P extends Model.Prompts, R extends Model.Responses, T extends Model.ToolResults, L extends Locals = Locals, M extends Metadata = Metadata> {
+      name: string;
+      tools: Tool<O, P, R, T, L, M, any>[];
+    }
   }
 
   export namespace Stage {

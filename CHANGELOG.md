@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.5] - 2025-08-05
+### Changed
+- The maximum number of allowed function calls per stage is now determined by `this.settings.maxCallStack` instead of a hardcoded value.
+
+### Fixed
+- Fixed a bug where a function call was being inserted before the stage that requested it, causing a loop between the requesting stage and the function call. Now, function calls are correctly appended to the pipeline after the requesting stage.
+
 ## [2.1.1] - 2024-07-27
 ### Added
 - Implemented a new function `call` - allows you to programatically trigger a function provided by to the LLM.

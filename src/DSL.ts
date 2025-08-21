@@ -918,7 +918,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
       for ( const func of funcs ) {
         const { func: promise, parameters, name, args } = func!;
         const calls = $chat.functions[ name ].calls;
-        if ( calls > 2 && currentStage === name ) {
+        if ( calls > this.settings.maxCallStack && currentStage === name ) {
           // this function has been called multiple times within the current stage
           //  which is going to be treated as a never resolving loop.
           reject( new Error( `Function Loop - function: ${ name }` ) );
@@ -944,15 +944,16 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
         result.role = "system";
         result.visibility = options.visibility !== undefined ? options.visibility : Visibility.SYSTEM;
         const stage = { id: this.storage.newId(), stage: name, promise: $chat._prompt( $chat, { ...$chat.options, ...result } as O, prompt || messageId ) };
-        if ( $chat.pipelineCursor === $chat.pipeline.length ) {
+        const currentStageIndex = $chat.pipelineCursor + 1;
+        if ( currentStageIndex === $chat.pipeline.length ) {
           // end of the chat, just need to push the new stage
           $chat.pipeline.push( stage );
         } else {
           // middle of pipeline, we need to insert the stage in the current position and shift all subsequent stages
           $chat.pipeline = [
-            ...$chat.pipeline.slice( 0, $chat.pipelineCursor + position ),
+            ...$chat.pipeline.slice( 0, currentStageIndex + position ),
             stage,
-            ...$chat.pipeline.slice( $chat.pipelineCursor + position )
+            ...$chat.pipeline.slice( currentStageIndex + position )
           ];
         }
         position += 1;

@@ -457,16 +457,38 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
    * @returns a clone of the chat object
    */
   clone( { startAt }: { startAt: "beginning" | "end" | number; } = { startAt: "beginning" } ) {
-    const $this = cloneDeep( this );
+    // Create a new instance with the same constructor args
+    const $this = new DSL<O, L, M>( {
+      llm: this.llm,
+      options: { ...this.options },
+      locals: { ...this.locals },
+      metadata: { ...( this.data.metadata || {} ) } as M,
+      storage: this.storage,
+      settings: { ...this.settings },
+      window: this.window,
+    } );
+
+    // Deep clone mutable data
+    $this.data = cloneDeep( this.data );
     $this.data.id = this.storage.newId();
     $this.data.messages = $this.data.messages.map( m => {
-      const index = $this.rules.indexOf( m.id! );
+      const index = this.rules.indexOf( m.id! );
       m.id = this.storage.newId();
       if ( index !== -1 ) {
         $this.rules[ index ] = m.id;
       }
       return m;
     } );
+
+    $this.rules = [ ...this.rules ];
+    $this.functions = { ...this.functions };
+    $this.type = this.type;
+    $this.user = this.user;
+
+    // Deep clone pipeline
+    $this.pipeline = cloneDeep( this.pipeline );
+
+    // Set pipelineCursor appropriately
     if ( startAt === "beginning" ) {
       $this.pipelineCursor = -1;
     } else if ( startAt === "end" ) {
@@ -474,6 +496,7 @@ export class DSL<O extends Options, L extends Locals, M extends Metadata> {
     } else {
       $this.pipelineCursor = startAt;
     }
+
     return $this;
   }
 
